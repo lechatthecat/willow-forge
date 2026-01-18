@@ -1,0 +1,4 @@
+
+```
+$ cargo run -- new demo-app
+```
