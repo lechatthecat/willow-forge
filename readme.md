@@ -1,6 +1,6 @@
 # Willow Forge
 
-A web framework for Rust.
+A laravel-inspired web framework for Rust.
 
 ---
 
