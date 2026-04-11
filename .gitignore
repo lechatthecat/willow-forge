@@ -1,4 +1,6 @@
 .claude/
 demo-app/
+demo/
 target/
+specs/
 claude.md

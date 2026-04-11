@@ -104,24 +104,105 @@ impl {} {{
     Ok(())
 }
 
-pub fn migration(name: &str) -> Result<()> {
-    let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
-    let filename = format!("{}_{}.sql", timestamp, name);
-    let path = Path::new("database/migrations").join(&filename);
+fn view_name_to_path(name: &str) -> std::path::PathBuf {
+    let parts: Vec<&str> = name.split('.').collect();
+    let (dirs, stem) = parts.split_at(parts.len() - 1);
+    let mut path = Path::new("resources/views").to_path_buf();
+    for dir in dirs {
+        path = path.join(dir);
+    }
+    path.join(format!("{}.jinja.html", stem[0]))
+}
+
+pub fn view_file(name: &str) -> Result<()> {
+    let file_path = view_name_to_path(name);
+    let path = file_path.parent().unwrap();
+
+    fs::create_dir_all(path)
+        .with_context(|| format!("Failed to create directory: {}", path.display()))?;
+
+    if file_path.exists() {
+        anyhow::bail!("View already exists: {}", file_path.display());
+    }
 
     let content = format!(
-        r#"-- Migration: {}
--- Created at: {}
-
--- Add your SQL here
-"#,
-        name,
-        chrono::Utc::now().format("%Y-%m-%d %H:%M:%S")
+        "{{% extends \"layouts.app\" %}}\n\n{{% block title %}}{name}{{% endblock %}}\n\n{{% block content %}}\n<h1>{name}</h1>\n{{% endblock %}}\n",
+        name = name
     );
 
-    fs::write(&path, content)
-        .with_context(|| format!("Failed to create migration: {}", path.display()))?;
+    fs::write(&file_path, content)
+        .with_context(|| format!("Failed to create view: {}", file_path.display()))?;
 
-    println!("✓ Migration created: {}", path.display());
+    println!("✓ View created: {}", file_path.display());
     Ok(())
+}
+
+pub fn middleware(name: &str) -> Result<()> {
+    let path = Path::new("app/Http/Middleware").join(format!("{}.rs", name));
+
+    if path.exists() {
+        anyhow::bail!("Middleware already exists: {}", path.display());
+    }
+
+    let content = crate::templates::app_files::make_middleware_template(name);
+
+    fs::write(&path, &content)
+        .with_context(|| format!("Failed to create middleware: {}", path.display()))?;
+
+    println!("✓ Middleware created: {}", path.display());
+    Ok(())
+}
+
+pub fn migration(name: &str) -> Result<()> {
+    let now = chrono::Utc::now();
+    let timestamp = now.format("%Y%m%d%H%M%S");
+    let created = now.format("%Y-%m-%d %H:%M:%S");
+    let base = Path::new("database/migrations");
+
+    let up_path   = base.join(format!("{}_{}.up.sql", timestamp, name));
+    let down_path = base.join(format!("{}_{}.down.sql", timestamp, name));
+
+    fs::write(&up_path, format!(
+        "-- Migration: {name}\n-- Created:   {created}\n\n-- Write your UP migration SQL here.\n",
+        name = name, created = created,
+    )).with_context(|| format!("Failed to write {}", up_path.display()))?;
+
+    fs::write(&down_path, format!(
+        "-- Migration: {name} (rollback)\n-- Created:   {created}\n\n-- Write your DOWN migration SQL here.\n",
+        name = name, created = created,
+    )).with_context(|| format!("Failed to write {}", down_path.display()))?;
+
+    println!("✓ Created: {}", up_path.display());
+    println!("✓ Created: {}", down_path.display());
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::view_name_to_path;
+    use std::path::PathBuf;
+
+    #[test]
+    fn single_segment() {
+        assert_eq!(
+            view_name_to_path("welcome"),
+            PathBuf::from("resources/views/welcome.jinja.html")
+        );
+    }
+
+    #[test]
+    fn two_segments() {
+        assert_eq!(
+            view_name_to_path("users.index"),
+            PathBuf::from("resources/views/users/index.jinja.html")
+        );
+    }
+
+    #[test]
+    fn three_segments() {
+        assert_eq!(
+            view_name_to_path("admin.users.show"),
+            PathBuf::from("resources/views/admin/users/show.jinja.html")
+        );
+    }
 }
