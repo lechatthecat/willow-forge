@@ -432,12 +432,3 @@ pub async fn store(
 
 ---
 
-## v1 limitations
-
-- No authentication or session handling
-- No Blade-compatible template syntax (MiniJinja/Jinja2 syntax is used)
-- No view components, slots, or custom directives
-- No ActiveRecord-style ORM (raw sqlx queries)
-- No queue or event system
-- Error responses are always JSON (no HTML error pages in v1)
-- `config/*.toml` files are generated but not loaded at runtime (env vars are used directly)
