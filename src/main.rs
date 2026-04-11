@@ -5,8 +5,8 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "willow")]
-#[command(about = "Willow Framework - Laravel-like web framework for Rust", long_about = None)]
+#[command(name = "willow-forge")]
+#[command(about = "Willow Forge - Laravel-like web framework for Rust", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -14,7 +14,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    #[command(about = "Create a new Willow application")]
+    #[command(about = "Create a new Willow Forge application")]
     New {
         #[arg(help = "Name of the application")]
         name: String,

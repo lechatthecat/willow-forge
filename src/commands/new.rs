@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 
 pub fn execute(name: &str) -> Result<()> {
-    println!("🌿 Creating new Willow application: {}", name);
+    println!("🌿 Creating new Willow Forge application: {}", name);
 
     let app_path = Path::new(name);
 

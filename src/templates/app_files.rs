@@ -34,7 +34,7 @@ path = "src/main.rs"
 }
 
 pub fn env_file() -> &'static str {
-    r#"APP_NAME=Willow
+    r#"APP_NAME=Willow Forge
 APP_ENV=local
 APP_DEBUG=true
 APP_URL=http://localhost:3000
@@ -42,7 +42,7 @@ APP_URL=http://localhost:3000
 DB_CONNECTION=postgres
 DB_HOST=127.0.0.1
 DB_PORT=5432
-DB_DATABASE=willow
+DB_DATABASE=willowforge
 DB_USERNAME=postgres
 DB_PASSWORD=
 "#
@@ -84,7 +84,7 @@ async fn main() -> Result<()> {{
     let addr = "0.0.0.0:3000";
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
-    tracing::info!("🌿 Willow server started on http://{{}}", addr);
+    tracing::info!("🌿 Willow Forge server started on http://{{}}", addr);
 
     axum::serve(listener, app).await?;
 
@@ -119,7 +119,7 @@ use std::sync::Arc;
 
 pub async fn bootstrap() -> Result<Arc<AppState>> {
     let config = Config {
-        app_name: std::env::var("APP_NAME").unwrap_or_else(|_| "Willow".to_string()),
+        app_name: std::env::var("APP_NAME").unwrap_or_else(|_| "Willow Forge".to_string()),
         app_env: std::env::var("APP_ENV").unwrap_or_else(|_| "local".to_string()),
         app_debug: std::env::var("APP_DEBUG")
             .unwrap_or_else(|_| "true".to_string())
@@ -495,11 +495,12 @@ use sqlx::PgPool;
 pub fn create_pool() -> Result<PgPool> {
     let host     = std::env::var("DB_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
     let port     = std::env::var("DB_PORT").unwrap_or_else(|_| "5432".to_string());
-    let database = std::env::var("DB_DATABASE")
-        .context("DB_DATABASE environment variable is not set")?;
+    let database = std::env::var("DB_DATABASE").unwrap_or_default();
     let username = std::env::var("DB_USERNAME").unwrap_or_else(|_| "postgres".to_string());
     let password = std::env::var("DB_PASSWORD").unwrap_or_default();
 
+    // connect_lazy defers the actual connection until first query.
+    // If DB_DATABASE is not set the app still starts; only DB endpoints will fail.
     let url = format!(
         "postgres://{}:{}@{}:{}/{}",
         username, password, host, port, database
@@ -762,9 +763,9 @@ pub fn view_welcome() -> &'static str {
 
 {% block content %}
 <h1>Welcome to {{ app_name }}</h1>
-<p>Your Willow application is up and running.</p>
+<p>Your Willow Forge application is up and running.</p>
 <ul>
-    <li><strong>Framework:</strong> Willow</li>
+    <li><strong>Framework:</strong> Willow Forge</li>
     <li><strong>Environment:</strong> {{ app_env }}</li>
     <li><strong>View engine:</strong> MiniJinja</li>
     <li><strong>Database:</strong> <span id="db-status">checking...</span></li>
@@ -814,7 +815,7 @@ pub fn view_welcome() -> &'static str {
 
 pub fn config_app() -> &'static str {
     r#"[app]
-name = "Willow"
+name = "Willow Forge"
 env = "local"
 debug = true
 url = "http://localhost:3000"
@@ -826,7 +827,7 @@ pub fn config_database() -> &'static str {
 connection = "postgres"
 host = "127.0.0.1"
 port = 5432
-database = "willow"
+database = "willowforge"
 username = "postgres"
 password = ""
 "#

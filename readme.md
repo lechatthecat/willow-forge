@@ -1,6 +1,6 @@
-# Willow Framework
+# Willow Forge
 
-A Laravel-like web framework for Rust.
+A web framework for Rust.
 
 ---
 
@@ -15,7 +15,7 @@ cargo install --path .
 Then scaffold a new application:
 
 ```
-willow new my-app
+willow-forge new my-app
 cd my-app
 cargo run
 ```
@@ -113,7 +113,7 @@ let app = middleware::global(
 
 ## AppState and Context (dependency injection)
 
-Willow does DI via `Arc<AppState>` passed through the axum router state.
+Willow Forge does DI via `Arc<AppState>` passed through the axum router state.
 
 ### AppState
 
@@ -226,7 +226,7 @@ pub fn web(router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
 Generate a new middleware skeleton:
 
 ```
-willow make:middleware Auth
+willow-forge make:middleware Auth
 ```
 
 This creates `app/Http/Middleware/Auth.rs` with a `handle()` stub and instructions for registering it in `bootstrap/middleware.rs`.
@@ -312,14 +312,14 @@ In `layouts/app.jinja.html`:
 
 ## Database
 
-Willow uses [sqlx](https://github.com/launchbainco/sqlx) for database access. **PostgreSQL** is the only supported database in v1.
+Willow Forge uses [sqlx](https://github.com/launchbainco/sqlx) for database access. **PostgreSQL** is the only supported database in v1.
 
 ### Setup
 
 ```
 DB_HOST=127.0.0.1
 DB_PORT=5432
-DB_DATABASE=willow
+DB_DATABASE=willowforge
 DB_USERNAME=postgres
 DB_PASSWORD=postgres
 ```
@@ -327,12 +327,12 @@ DB_PASSWORD=postgres
 ### Migrations
 
 ```
-willow migrate                          # run pending migrations
-willow make:migration add_posts_table   # create a new migration pair
-willow migrate:rollback                 # undo last migration
-willow migrate:status                   # list applied / pending
-willow migrate:fresh                    # drop all + re-run
-willow migrate:reset                    # rollback all
+willow-forge migrate                          # run pending migrations
+willow-forge make:migration add_posts_table   # create a new migration pair
+willow-forge migrate:rollback                 # undo last migration
+willow-forge migrate:status                   # list applied / pending
+willow-forge migrate:fresh                    # drop all + re-run
+willow-forge migrate:reset                    # rollback all
 ```
 
 Migration files live in `database/migrations/` as `.up.sql` / `.down.sql` pairs.
@@ -415,20 +415,20 @@ pub async fn store(
 
 | Command | Description |
 |---------|-------------|
-| `willow new <name>` | Scaffold a new application |
-| `willow make:controller <Name>` | Create `app/Http/Controllers/<Name>.rs` |
-| `willow make:request <Name>` | Create `app/Http/Requests/<Name>.rs` |
-| `willow make:model <Name>` | Create `app/Models/<Name>.rs` |
-| `willow make:view <name>` | Create a view (dot notation supported) |
-| `willow make:migration <name>` | Create a timestamped migration pair |
-| `willow make:middleware <name>` | Create `app/Http/Middleware/<Name>.rs` |
-| `willow migrate` | Run pending migrations |
-| `willow migrate:rollback` | Roll back the last migration |
-| `willow migrate:status` | Show applied / pending migrations |
-| `willow migrate:fresh` | Drop all tables and re-run all migrations |
-| `willow migrate:reset` | Roll back all migrations |
+| `willow-forge new <name>` | Scaffold a new application |
+| `willow-forge make:controller <Name>` | Create `app/Http/Controllers/<Name>.rs` |
+| `willow-forge make:request <Name>` | Create `app/Http/Requests/<Name>.rs` |
+| `willow-forge make:model <Name>` | Create `app/Models/<Name>.rs` |
+| `willow-forge make:view <name>` | Create a view (dot notation supported) |
+| `willow-forge make:migration <name>` | Create a timestamped migration pair |
+| `willow-forge make:middleware <name>` | Create `app/Http/Middleware/<Name>.rs` |
+| `willow-forge migrate` | Run pending migrations |
+| `willow-forge migrate:rollback` | Roll back the last migration |
+| `willow-forge migrate:status` | Show applied / pending migrations |
+| `willow-forge migrate:fresh` | Drop all tables and re-run all migrations |
+| `willow-forge migrate:reset` | Roll back all migrations |
 
-> Use `cargo run` to start the application. There is no `willow serve` command.
+> Use `cargo run` to start the application. There is no `willow-forge serve` command.
 
 ---
 

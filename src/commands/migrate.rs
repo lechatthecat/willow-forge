@@ -34,7 +34,7 @@ async fn build_migrator() -> Result<Migrator> {
         .context("Failed to load migrations from database/migrations/")
 }
 
-// ── willow migrate ────────────────────────────────────────────────────────────
+// ── willow-forge migrate ────────────────────────────────────────────────────────────
 
 pub async fn execute() -> Result<()> {
     dotenvy::dotenv().ok();
@@ -47,7 +47,7 @@ pub async fn execute() -> Result<()> {
     Ok(())
 }
 
-// ── willow migrate:rollback ───────────────────────────────────────────────────
+// ── willow-forge migrate:rollback ───────────────────────────────────────────────────
 
 pub async fn rollback() -> Result<()> {
     dotenvy::dotenv().ok();
@@ -87,7 +87,7 @@ pub async fn rollback() -> Result<()> {
     Ok(())
 }
 
-// ── willow migrate:status ─────────────────────────────────────────────────────
+// ── willow-forge migrate:status ─────────────────────────────────────────────────────
 
 pub async fn status() -> Result<()> {
     dotenvy::dotenv().ok();
@@ -119,7 +119,7 @@ pub async fn status() -> Result<()> {
     Ok(())
 }
 
-// ── willow migrate:fresh ──────────────────────────────────────────────────────
+// ── willow-forge migrate:fresh ──────────────────────────────────────────────────────
 
 pub async fn fresh() -> Result<()> {
     dotenvy::dotenv().ok();
@@ -141,7 +141,7 @@ pub async fn fresh() -> Result<()> {
     Ok(())
 }
 
-// ── willow migrate:reset ──────────────────────────────────────────────────────
+// ── willow-forge migrate:reset ──────────────────────────────────────────────────────
 
 pub async fn reset() -> Result<()> {
     dotenvy::dotenv().ok();

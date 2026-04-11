@@ -1,11 +1,11 @@
 [package]
-name = "willow"
+name = "willow-forge"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
 
 [[bin]]
-name = "willow"
+name = "willow-forge"
 path = "src/main.rs"
 
 [dependencies]
