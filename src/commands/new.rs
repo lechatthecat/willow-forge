@@ -8,7 +8,14 @@ pub fn execute(name: &str) -> Result<()> {
     let app_path = Path::new(name);
 
     if app_path.exists() {
-        anyhow::bail!("Directory '{}' already exists", name);
+        eprintln!();
+        eprintln!("  ✗ A directory named '{}' already exists.", name);
+        eprintln!();
+        eprintln!("  To create a new app, either:");
+        eprintln!("    • Choose a different name:  willow new my-app");
+        eprintln!("    • Remove the existing directory first");
+        eprintln!();
+        std::process::exit(1);
     }
 
     create_directory_structure(app_path)?;
@@ -24,6 +31,7 @@ pub fn execute(name: &str) -> Result<()> {
 
 fn create_directory_structure(base: &Path) -> Result<()> {
     let dirs = vec![
+        "app/Exceptions",
         "app/Http/Controllers",
         "app/Http/Middleware",
         "app/Http/Requests",
@@ -37,6 +45,7 @@ fn create_directory_structure(base: &Path) -> Result<()> {
         "database/factories",
         "routes",
         "resources/views/layouts",
+        "resources/views/errors",
         "resources/views/partials",
         "resources/lang",
         "storage/logs",
@@ -83,6 +92,7 @@ fn generate_files(base: &Path, name: &str) -> Result<()> {
 
     // app/
     fs::write(base.join("app/errors.rs"), app_files::app_errors_rs())?;
+    fs::write(base.join("app/Exceptions/Handler.rs"), app_files::exception_handler_rs(&crate_name))?;
     fs::write(base.join("app/Http/Middleware/LogRequest.rs"), app_files::middleware_log_request_rs())?;
     fs::write(base.join("app/Providers/AppServiceProvider.rs"), app_files::app_service_provider())?;
     fs::write(base.join("app/Http/Controllers/HomeController.rs"), app_files::home_controller(&crate_name))?;
@@ -97,6 +107,8 @@ fn generate_files(base: &Path, name: &str) -> Result<()> {
     // resources/views/
     fs::write(base.join("resources/views/layouts/app.jinja.html"), app_files::view_layout_app())?;
     fs::write(base.join("resources/views/welcome.jinja.html"), app_files::view_welcome())?;
+    fs::write(base.join("resources/views/errors/404.jinja.html"), app_files::view_error_404_html())?;
+    fs::write(base.join("resources/views/errors/500.jinja.html"), app_files::view_error_500_html())?;
 
     // app/Models/
     fs::write(base.join("app/Models/User.rs"), app_files::user_model_rs())?;

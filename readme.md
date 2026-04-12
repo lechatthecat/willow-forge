@@ -233,6 +233,57 @@ This creates `app/Http/Middleware/Auth.rs` with a `handle()` stub and instructio
 
 ---
 
+## Exception handling
+
+### Custom error views
+
+Error views live in `resources/views/errors/` as `.jinja.html` files.
+`app/Exceptions/Handler.rs` intercepts every error response and renders the matching view when it exists.
+
+| Template | Rendered when |
+|----------|---------------|
+| `resources/views/errors/404.jinja.html` | 404 Not Found |
+| `resources/views/errors/500.jinja.html` | 500 Internal Server Error |
+| `resources/views/errors/{code}.jinja.html` | Any other status code |
+
+Variables available in every error view: `code`, `message`, `app_name`, `app_env`.
+
+If no matching view exists the original JSON response (`AppError::IntoResponse`) is passed through unchanged.
+
+### Route fallback
+
+Undefined routes are caught by the `.fallback()` handler in `src/main.rs` and converted to `AppError::NotFound`:
+
+```rust
+// src/main.rs — generated automatically
+async fn not_found() -> impl axum::response::IntoResponse {
+    AppError::NotFound
+}
+
+// ...
+.fallback(not_found)
+```
+
+### Customizing error handling
+
+Open `app/Exceptions/Handler.rs` to add shared logic for all errors — logging, alerting, custom headers:
+
+```rust
+pub async fn render(State(state): State<Arc<AppState>>, request: Request, next: Next) -> Response {
+    let response = next.run(request).await;
+    let status = response.status();
+
+    if status.is_server_error() {
+        tracing::error!("Server error: {}", status);  // add custom logic here
+    }
+
+    // render error view if available, otherwise pass through
+    // ...
+}
+```
+
+---
+
 ## Views
 
 Views live under `resources/views/` as `.jinja.html` files.

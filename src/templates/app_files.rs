@@ -56,10 +56,19 @@ mod api;
 mod web;
 #[path = "../bootstrap/middleware.rs"]
 mod middleware;
+#[path = "../app/Exceptions/Handler.rs"]
+mod exception_handler;
 
 use anyhow::Result;
-use {name}::bootstrap;
+use std::sync::Arc;
+use {name}::{{bootstrap, AppError}};
 use tracing_subscriber::{{layer::SubscriberExt, util::SubscriberInitExt}};
+
+/// Fallback handler for undefined routes — equivalent to Route::fallback().
+/// Returns AppError::NotFound, which the exception handler may render as an HTML view.
+async fn not_found() -> impl axum::response::IntoResponse {{
+    AppError::NotFound
+}}
 
 #[tokio::main]
 async fn main() -> Result<()> {{
@@ -77,8 +86,13 @@ async fn main() -> Result<()> {{
 
     let app = middleware::global(
         middleware::api(api::routes())
-            .merge(middleware::web(web::routes())),
+            .merge(middleware::web(web::routes()))
+            .fallback(not_found),
     )
+    .layer(axum::middleware::from_fn_with_state(
+        Arc::clone(&app_state),
+        exception_handler::render,
+    ))
     .with_state(app_state);
 
     let addr = "0.0.0.0:3000";
@@ -183,6 +197,128 @@ fn path_to_template_name(rel: &std::path::Path) -> String {
 
     parts.join(".")
 }
+"#
+}
+
+pub fn exception_handler_rs(name: &str) -> String {
+    format!(
+        r#"use axum::{{
+    extract::{{Request, State}},
+    middleware::Next,
+    response::{{Html, IntoResponse, Response}},
+}};
+use minijinja::context;
+use std::sync::Arc;
+
+use {name}::AppState;
+
+/// Equivalent to Laravel's `$request->expectsJson()`.
+///
+/// Returns true if:
+/// - Accept header contains `application/json`, `/json`, or `+json`  (wantsJson)
+/// - OR the request is an AJAX call (X-Requested-With: XMLHttpRequest) with Accept: */* or absent
+fn expects_json(request: &Request) -> bool {{
+    let accept = request
+        .headers()
+        .get(axum::http::header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    // wantsJson()
+    let wants_json = accept.contains("application/json")
+        || accept.contains("/json")
+        || accept.contains("+json");
+
+    // ajax() — X-Requested-With: XMLHttpRequest
+    let is_ajax = request
+        .headers()
+        .get("x-requested-with")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.eq_ignore_ascii_case("xmlhttprequest"))
+        .unwrap_or(false);
+
+    // acceptsAnyContentType() — Accept: */* or header absent
+    let accepts_any = accept.is_empty() || accept.contains("*/*");
+
+    wants_json || (is_ajax && accepts_any)
+}}
+
+/// Exception handler — intercepts error responses and renders HTML error views when available.
+///
+/// How it works:
+/// - Runs on every response (as the outermost layer in main.rs)
+/// - If `expects_json()` is true (Laravel-equivalent), passes through as-is
+/// - Otherwise, if the status is 4xx/5xx, looks for resources/views/errors/{{code}}.jinja.html
+/// - If found, replaces the response with the rendered HTML view
+/// - If not found, passes through the original response unchanged
+///
+/// To add a custom error view, create resources/views/errors/404.jinja.html etc.
+/// To add shared logic (logging, alerting), add it inside this function.
+/// To force JSON for specific paths (like Laravel's shouldRenderJsonWhen), modify expects_json().
+pub async fn render(
+    State(state): State<Arc<AppState>>,
+    request: Request,
+    next: Next,
+) -> Response {{
+    let json_expected = expects_json(&request);
+
+    let response = next.run(request).await;
+
+    // If the client expects JSON, skip HTML error view rendering
+    if json_expected {{
+        return response;
+    }}
+
+    let status = response.status();
+
+    if !status.is_client_error() && !status.is_server_error() {{
+        return response;
+    }}
+
+    let code = status.as_u16();
+    let template_name = format!("errors.{{}}", code);
+
+    if let Ok(tmpl) = state.views.get_template(&template_name) {{
+        let data = context! {{
+            code     => code,
+            message  => status.canonical_reason().unwrap_or("Error"),
+            app_name => state.config.app_name.clone(),
+            app_env  => state.config.app_env.clone(),
+        }};
+        if let Ok(html) = tmpl.render(data) {{
+            return (status, Html(html)).into_response();
+        }}
+    }}
+
+    response
+}}
+"#,
+        name = name
+    )
+}
+
+pub fn view_error_404_html() -> &'static str {
+    r#"{% extends "layouts.app" %}
+
+{% block title %}404 — Not Found | {{ app_name }}{% endblock %}
+
+{% block content %}
+<h1>{{ code }}</h1>
+<p>{{ message }}</p>
+<p><a href="/">← Back to home</a></p>
+{% endblock %}
+"#
+}
+
+pub fn view_error_500_html() -> &'static str {
+    r#"{% extends "layouts.app" %}
+
+{% block title %}500 — Server Error | {{ app_name }}{% endblock %}
+
+{% block content %}
+<h1>{{ code }}</h1>
+<p>{{ message }}</p>
+{% endblock %}
 "#
 }
 
