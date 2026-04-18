@@ -1002,7 +1002,7 @@ pub fn view_welcome() -> &'static str {
 
 <h2>Docker Hints</h2>
 <h3>Get inside a container</h3>
-<pre><code>docker exec -it redis sh</code></pre>
+<pre><code>docker exec -it redis-node-1 sh</code></pre>
 
 <h3>Logs</h3>
 <pre><code>docker logs --tail 50 --follow --timestamps postgres-db
