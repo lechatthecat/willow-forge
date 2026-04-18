@@ -1020,7 +1020,7 @@ docker volume inspect &lt;volume-name&gt;</code></pre>
 
 <h3>Other commands</h3>
 <p>Flush Redis cache:</p>
-<pre><code>docker exec -it redis-node-1 -- redis-cli -p 7001 FLUSHALL</code></pre>
+<pre><code>docker exec -it redis-node-1 redis-cli -p 7001 FLUSHALL</code></pre>
 
 <h3>Delete everything <span style="color:#b02a37">⚠ DANGER</span></h3>
 <p style="color:#b02a37"><strong>Do NOT run this if you have any container or image you want to keep. This will delete every Docker image on your PC.</strong></p>
