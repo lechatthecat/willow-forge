@@ -53,6 +53,7 @@ fn create_directory_structure(base: &Path) -> Result<()> {
         "tests/Feature",
         "tests/Unit",
         "src",
+        "docker",
     ];
 
     for dir in dirs {
@@ -128,6 +129,9 @@ fn generate_files(base: &Path, name: &str) -> Result<()> {
     fs::write(base.join("config/app.toml"), app_files::config_app())?;
     fs::write(base.join("config/database.toml"), app_files::config_database())?;
     fs::write(base.join("config/cache.toml"), app_files::config_cache())?;
+
+    // docker/
+    fs::write(base.join("docker/docker-compose.yml"), app_files::docker_compose())?;
 
     // .gitignore
     fs::write(base.join(".gitignore"), app_files::gitignore())?;

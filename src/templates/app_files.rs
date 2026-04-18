@@ -18,8 +18,7 @@ anyhow = "1"
 thiserror = "1"
 minijinja = {{ version = "2", features = ["loader"] }}
 sqlx = {{ version = "0.8", features = ["postgres", "runtime-tokio-rustls", "chrono"] }}
-redis = {{ version = "0.27", features = ["tokio-comp"] }}
-deadpool-redis = "0.18"
+redis = {{ version = "0.27", features = ["tokio-comp", "cluster-async"] }}
 chrono = {{ version = "0.4", features = ["serde"] }}
 tracing = "0.1"
 tracing-subscriber = {{ version = "0.3", features = ["env-filter"] }}
@@ -36,7 +35,7 @@ path = "src/main.rs"
 }
 
 pub fn env_file() -> &'static str {
-    r#"APP_NAME=Willow Forge
+    r#"APP_NAME="Willow Forge"
 APP_ENV=local
 APP_DEBUG=true
 APP_URL=http://localhost:3000
@@ -46,13 +45,9 @@ DB_HOST=127.0.0.1
 DB_PORT=5432
 DB_DATABASE=willowforge
 DB_USERNAME=postgres
-DB_PASSWORD=
+DB_PASSWORD=postgres
 
-REDIS_HOST=127.0.0.1
-REDIS_PORT=6379
-REDIS_PASSWORD=
-REDIS_DB=0
-REDIS_CACHE_DB=1
+REDIS_CLUSTER_NODES=redis://127.0.0.1:7001,redis://127.0.0.1:7002,redis://127.0.0.1:7003
 "#
 }
 
@@ -131,7 +126,7 @@ pub mod app_errors;
 mod app_service_provider;
 
 pub use app_errors::AppError;
-pub use app_state::{AppState, Config, RedisConfig, Services, ViewEngine};
+pub use app_state::{AppState, Config, RedisCluster, RedisConfig, Services, ViewEngine};
 pub use cache::Cache;
 pub use context::Context;
 pub use validated_json::ValidatedJson;
@@ -142,16 +137,14 @@ use minijinja::Environment;
 use std::sync::Arc;
 
 pub async fn bootstrap() -> Result<Arc<AppState>> {
-    let redis_config = RedisConfig {
-        host:     std::env::var("REDIS_HOST").unwrap_or_else(|_| "127.0.0.1".to_string()),
-        port:     std::env::var("REDIS_PORT").unwrap_or_else(|_| "6379".to_string())
-                      .parse().unwrap_or(6379),
-        password: std::env::var("REDIS_PASSWORD").ok().filter(|s| !s.is_empty()),
-        db:       std::env::var("REDIS_DB").unwrap_or_else(|_| "0".to_string())
-                      .parse().unwrap_or(0),
-        cache_db: std::env::var("REDIS_CACHE_DB").unwrap_or_else(|_| "1".to_string())
-                      .parse().unwrap_or(1),
-    };
+    let redis_nodes: Vec<String> = std::env::var("REDIS_CLUSTER_NODES")
+        .unwrap_or_else(|_| {
+            "redis://127.0.0.1:7001,redis://127.0.0.1:7002,redis://127.0.0.1:7003".to_string()
+        })
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
 
     let config = Config {
         app_name: std::env::var("APP_NAME").unwrap_or_else(|_| "Willow Forge".to_string()),
@@ -160,16 +153,15 @@ pub async fn bootstrap() -> Result<Arc<AppState>> {
             .unwrap_or_else(|_| "true".to_string())
             .parse()
             .unwrap_or(true),
-        redis: redis_config,
+        redis: RedisConfig { nodes: redis_nodes.clone() },
     };
 
     let views = build_view_engine()?;
 
-    let db          = app_service_provider::create_pool()?;
-    let redis       = app_service_provider::create_redis_pool(config.redis.db)?;
-    let cache_redis = app_service_provider::create_redis_pool(config.redis.cache_db)?;
+    let db    = app_service_provider::create_pool()?;
+    let redis = app_service_provider::create_redis_cluster(&redis_nodes)?;
 
-    let services = Services { db, redis, cache_redis };
+    let services = Services { db, redis };
 
     Ok(Arc::new(AppState {
         config,
@@ -378,9 +370,6 @@ pub enum AppError {
     #[error("Database error")]
     Database(#[from] sqlx::Error),
 
-    #[error("Cache error")]
-    Cache(#[from] deadpool_redis::PoolError),
-
     #[error("Redis error")]
     Redis(#[from] redis::RedisError),
 
@@ -438,15 +427,6 @@ impl IntoResponse for AppError {
                     .into_response()
             }
 
-            AppError::Cache(e) => {
-                tracing::error!("Cache error: {}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "message": "Internal server error" })),
-                )
-                    .into_response()
-            }
-
             AppError::Redis(e) => {
                 tracing::error!("Redis error: {}", e);
                 (
@@ -468,11 +448,13 @@ impl IntoResponse for AppError {
 }
 
 pub fn app_state_rs() -> &'static str {
-    r#"use deadpool_redis::Pool as RedisPool;
-use minijinja::Environment;
+    r#"use minijinja::Environment;
+use redis::cluster::ClusterClient;
 use sqlx::PgPool;
+use std::sync::Arc;
 
 pub type ViewEngine = Environment<'static>;
+pub type RedisCluster = Arc<ClusterClient>;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -491,22 +473,16 @@ pub struct Config {
 
 #[derive(Debug, Clone)]
 pub struct RedisConfig {
-    pub host: String,
-    pub port: u16,
-    pub password: Option<String>,
-    pub db: i64,
-    pub cache_db: i64,
+    /// Cluster node URLs parsed from REDIS_CLUSTER_NODES (comma-separated).
+    pub nodes: Vec<String>,
 }
 
 #[derive(Clone)]
 pub struct Services {
     pub db: PgPool,
-    /// Raw Redis pool (DB index from REDIS_DB, default 0).
-    /// Use for direct Redis commands via redis::AsyncCommands.
-    pub redis: RedisPool,
-    /// Cache-dedicated Redis pool (DB index from REDIS_CACHE_DB, default 1).
-    /// Use via the Cache facade.
-    pub cache_redis: RedisPool,
+    /// Shared Redis cluster client.
+    /// Call `.get_async_connection().await` to obtain a connection.
+    pub redis: RedisCluster,
 }
 "#
 }
@@ -691,49 +667,40 @@ impl IntoResponse for ValidationError {
 
 pub fn app_service_provider() -> &'static str {
     r#"use anyhow::{Context, Result};
-use deadpool_redis::{Config as RedisPoolConfig, Pool as RedisPool, Runtime};
-use sqlx::postgres::PgPoolOptions;
+use redis::cluster::ClusterClient;
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
 use sqlx::PgPool;
+use std::sync::Arc;
 
 pub fn create_pool() -> Result<PgPool> {
     let host     = std::env::var("DB_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
-    let port     = std::env::var("DB_PORT").unwrap_or_else(|_| "5432".to_string());
+    let port: u16 = std::env::var("DB_PORT").unwrap_or_else(|_| "5432".to_string())
+        .parse().unwrap_or(5432);
     let database = std::env::var("DB_DATABASE").unwrap_or_default();
     let username = std::env::var("DB_USERNAME").unwrap_or_else(|_| "postgres".to_string());
     let password = std::env::var("DB_PASSWORD").unwrap_or_default();
 
-    // connect_lazy defers the actual connection until first query.
-    // If DB_DATABASE is not set the app still starts; only DB endpoints will fail.
-    let url = format!(
-        "postgres://{}:{}@{}:{}/{}",
-        username, password, host, port, database
-    );
+    let opts = PgConnectOptions::new()
+        .host(&host)
+        .port(port)
+        .database(&database)
+        .username(&username)
+        .password(&password)
+        .ssl_mode(PgSslMode::Disable);
 
-    PgPoolOptions::new()
+    Ok(PgPoolOptions::new()
         .max_connections(10)
-        .connect_lazy(&url)
-        .with_context(|| format!(
-            "Failed to configure Postgres pool for {}:{}/{}",
-            host, port, database
-        ))
+        .connect_lazy_with(opts))
 }
 
-pub fn create_redis_pool(db: i64) -> Result<RedisPool> {
-    let host     = std::env::var("REDIS_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
-    let port     = std::env::var("REDIS_PORT").unwrap_or_else(|_| "6379".to_string());
-    let password = std::env::var("REDIS_PASSWORD").ok().filter(|s| !s.is_empty());
-
-    let url = match &password {
-        Some(pw) => format!("redis://:{}@{}:{}/{}", pw, host, port, db),
-        None     => format!("redis://{}:{}/{}", host, port, db),
-    };
-
-    RedisPoolConfig::from_url(url)
-        .create_pool(Some(Runtime::Tokio1))
-        .with_context(|| format!(
-            "Failed to configure Redis pool for {}:{}/{}",
-            host, port, db
-        ))
+/// Build a Redis cluster client from a list of node URLs.
+///
+/// Only validates config syntax — no actual connection is made here.
+/// If the cluster is down the app still starts; Redis endpoints will fail gracefully.
+pub fn create_redis_cluster(nodes: &[String]) -> Result<Arc<ClusterClient>> {
+    let client = ClusterClient::new(nodes.iter().map(|s| s.as_str()).collect::<Vec<_>>())
+        .with_context(|| format!("Failed to configure Redis cluster client for nodes: {:?}", nodes))?;
+    Ok(Arc::new(client))
 }
 "#
 }
@@ -939,7 +906,7 @@ async fn check_redis(ctx: &Context) -> bool {{
     tokio::time::timeout(
         std::time::Duration::from_secs(2),
         async {{
-            match ctx.state.services.redis.get().await {{
+            match ctx.state.services.redis.get_async_connection().await {{
                 Ok(mut conn) => redis::cmd("PING").query_async::<String>(&mut conn).await.is_ok(),
                 Err(_) => false,
             }}
@@ -1015,6 +982,11 @@ pub fn view_welcome() -> &'static str {
     <li><strong>Redis:</strong> <span id="redis-status">checking...</span></li>
 </ul>
 
+<h2>Getting Started</h2>
+<p>Start the database and Redis cluster with Docker:</p>
+<pre><code>docker compose -f docker/docker-compose.yml up -d
+docker compose -f docker/docker-compose.yml up -d --build</code></pre>
+
 <h2>Available Routes</h2>
 <table>
     <thead>
@@ -1028,6 +1000,36 @@ pub fn view_welcome() -> &'static str {
         <tr><td><code>GET</code></td><td><code><a href="/api/status">/api/status</a></code></td><td>Database and Redis connection status</td></tr>
     </tbody>
 </table>
+
+<h2>Docker Hints</h2>
+<h3>Get inside a container</h3>
+<pre><code>docker exec -it redis sh</code></pre>
+
+<h3>Logs</h3>
+<pre><code>docker logs --tail 50 --follow --timestamps postgres-db
+docker logs --tail 50 --follow --timestamps redis-node-1</code></pre>
+
+<h3>List containers</h3>
+<pre><code>docker ps -a</code></pre>
+
+<h3>Stop containers</h3>
+<pre><code>docker compose -f docker/docker-compose.yml down</code></pre>
+
+<h3>Check volumes</h3>
+<pre><code>docker volume ls
+docker volume inspect &lt;volume-name&gt;</code></pre>
+
+<h3>Other commands</h3>
+<p>Flush Redis cache:</p>
+<pre><code>docker exec -it redis-node-1 -- redis-cli -p 7001 FLUSHALL</code></pre>
+
+<h3>Delete everything <span style="color:#b02a37">⚠ DANGER</span></h3>
+<p style="color:#b02a37"><strong>Do NOT run this if you have any container or image you want to keep. This will delete every Docker image on your PC.</strong></p>
+<pre><code>docker stop $(docker ps -aq)
+docker compose -f docker/docker-compose.yml down -v --rmi all --remove-orphans
+docker rmi $(docker images -q) -f
+docker volume rm $(docker volume ls -q)
+docker system prune --force --volumes --all</code></pre>
 
 <script>
     fetch('/api/status')
@@ -1270,7 +1272,7 @@ impl Cache {
         ctx: &Context,
         key: &str,
     ) -> Result<Option<T>, AppError> {
-        let mut conn = ctx.state.services.cache_redis.get().await?;
+        let mut conn = ctx.state.services.redis.get_async_connection().await?;
         let raw: Option<String> = conn.get(key).await?;
         match raw {
             None => Ok(None),
@@ -1299,7 +1301,7 @@ impl Cache {
                 "JSON serialization failed",
                 e.to_string(),
             )))?;
-        let mut conn = ctx.state.services.cache_redis.get().await?;
+        let mut conn = ctx.state.services.redis.get_async_connection().await?;
         let secs = ttl.as_secs().max(1);
         let _: () = conn.set_ex(key, json, secs).await?;
         Ok(())
@@ -1317,7 +1319,7 @@ impl Cache {
                 "JSON serialization failed",
                 e.to_string(),
             )))?;
-        let mut conn = ctx.state.services.cache_redis.get().await?;
+        let mut conn = ctx.state.services.redis.get_async_connection().await?;
         let _: () = conn.set(key, json).await?;
         Ok(())
     }
@@ -1365,7 +1367,7 @@ impl Cache {
 
     /// Delete a cached key. Returns `Ok(())` whether or not the key existed.
     pub async fn forget(ctx: &Context, key: &str) -> Result<(), AppError> {
-        let mut conn = ctx.state.services.cache_redis.get().await?;
+        let mut conn = ctx.state.services.redis.get_async_connection().await?;
         let _: () = conn.del(key).await?;
         Ok(())
     }
@@ -1373,14 +1375,14 @@ impl Cache {
     /// Flush all keys in the cache database (FLUSHDB).
     /// Safe because the cache uses its own DB index, separate from the raw Redis pool.
     pub async fn flush(ctx: &Context) -> Result<(), AppError> {
-        let mut conn = ctx.state.services.cache_redis.get().await?;
+        let mut conn = ctx.state.services.redis.get_async_connection().await?;
         let _: () = redis::cmd("FLUSHDB").query_async(&mut conn).await?;
         Ok(())
     }
 
     /// Check whether a key exists in the cache.
     pub async fn has(ctx: &Context, key: &str) -> Result<bool, AppError> {
-        let mut conn = ctx.state.services.cache_redis.get().await?;
+        let mut conn = ctx.state.services.redis.get_async_connection().await?;
         let exists: bool = conn.exists(key).await?;
         Ok(exists)
     }
@@ -1392,7 +1394,7 @@ impl Cache {
 
     /// Increment an integer counter by `delta`. Creates the key at 0 if absent.
     pub async fn increment_by(ctx: &Context, key: &str, delta: i64) -> Result<i64, AppError> {
-        let mut conn = ctx.state.services.cache_redis.get().await?;
+        let mut conn = ctx.state.services.redis.get_async_connection().await?;
         let result: i64 = conn.incr(key, delta).await?;
         Ok(result)
     }
@@ -1404,7 +1406,7 @@ impl Cache {
 
     /// Decrement an integer counter by `delta`.
     pub async fn decrement_by(ctx: &Context, key: &str, delta: i64) -> Result<i64, AppError> {
-        let mut conn = ctx.state.services.cache_redis.get().await?;
+        let mut conn = ctx.state.services.redis.get_async_connection().await?;
         let result: i64 = conn.decr(key, delta).await?;
         Ok(result)
     }
@@ -1415,15 +1417,224 @@ impl Cache {
 pub fn config_cache() -> &'static str {
     r#"# Cache configuration
 # These values are for documentation. The app reads env vars at runtime.
-# Set REDIS_* in your .env file to override.
+# Set REDIS_CLUSTER_NODES in your .env file to configure the cluster.
 
 [cache]
-store = "redis"
-host = "127.0.0.1"
-port = 6379
+store = "redis-cluster"
 
-# DB index used by the Cache facade (separate from the raw Redis pool)
-db = 1
+# Comma-separated list of cluster node URLs.
+# The client auto-discovers the full topology from these seed nodes.
+nodes = [
+    "redis://127.0.0.1:7001",
+    "redis://127.0.0.1:7002",
+    "redis://127.0.0.1:7003",
+]
+"#
+}
+
+pub fn docker_compose() -> &'static str {
+    r#"services:
+  db:
+    image: postgres:16-alpine
+    container_name: postgres-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: willowforge
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+  redis-node-1:
+    image: redis:8-alpine
+    restart: unless-stopped
+    container_name: redis-node-1
+    network_mode: host
+    command: >
+      redis-server
+        --bind 127.0.0.1
+        --port 7001
+        --cluster-enabled yes
+        --cluster-config-file /data/nodes.conf
+        --cluster-node-timeout 5000
+        --cluster-port 17001
+        --cluster-announce-ip 127.0.0.1
+        --cluster-announce-port 7001
+        --cluster-announce-bus-port 17001
+        --appendonly yes
+        --save ""
+    volumes:
+      - redis-node-1-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "127.0.0.1", "-p", "7001", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  redis-node-2:
+    image: redis:8-alpine
+    restart: unless-stopped
+    container_name: redis-node-2
+    network_mode: host
+    command: >
+      redis-server
+        --bind 127.0.0.1
+        --port 7002
+        --cluster-enabled yes
+        --cluster-config-file /data/nodes.conf
+        --cluster-node-timeout 5000
+        --cluster-port 17002
+        --cluster-announce-ip 127.0.0.1
+        --cluster-announce-port 7002
+        --cluster-announce-bus-port 17002
+        --appendonly yes
+        --save ""
+    volumes:
+      - redis-node-2-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "127.0.0.1", "-p", "7002", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  redis-node-3:
+    image: redis:8-alpine
+    restart: unless-stopped
+    container_name: redis-node-3
+    network_mode: host
+    command: >
+      redis-server
+        --bind 127.0.0.1
+        --port 7003
+        --cluster-enabled yes
+        --cluster-config-file /data/nodes.conf
+        --cluster-node-timeout 5000
+        --cluster-port 17003
+        --cluster-announce-ip 127.0.0.1
+        --cluster-announce-port 7003
+        --cluster-announce-bus-port 17003
+        --appendonly yes
+        --save ""
+    volumes:
+      - redis-node-3-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "127.0.0.1", "-p", "7003", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  redis-node-4:
+    image: redis:8-alpine
+    restart: unless-stopped
+    container_name: redis-node-4
+    network_mode: host
+    command: >
+      redis-server
+        --bind 127.0.0.1
+        --port 7004
+        --cluster-enabled yes
+        --cluster-config-file /data/nodes.conf
+        --cluster-node-timeout 5000
+        --cluster-port 17004
+        --cluster-announce-ip 127.0.0.1
+        --cluster-announce-port 7004
+        --cluster-announce-bus-port 17004
+        --appendonly yes
+        --save ""
+    volumes:
+      - redis-node-4-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "127.0.0.1", "-p", "7004", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  redis-node-5:
+    image: redis:8-alpine
+    restart: unless-stopped
+    container_name: redis-node-5
+    network_mode: host
+    command: >
+      redis-server
+        --bind 127.0.0.1
+        --port 7005
+        --cluster-enabled yes
+        --cluster-config-file /data/nodes.conf
+        --cluster-node-timeout 5000
+        --cluster-port 17005
+        --cluster-announce-ip 127.0.0.1
+        --cluster-announce-port 7005
+        --cluster-announce-bus-port 17005
+        --appendonly yes
+        --save ""
+    volumes:
+      - redis-node-5-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "127.0.0.1", "-p", "7005", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  redis-node-6:
+    image: redis:8-alpine
+    restart: unless-stopped
+    container_name: redis-node-6
+    network_mode: host
+    command: >
+      redis-server
+        --bind 127.0.0.1
+        --port 7006
+        --cluster-enabled yes
+        --cluster-config-file /data/nodes.conf
+        --cluster-node-timeout 5000
+        --cluster-port 17006
+        --cluster-announce-ip 127.0.0.1
+        --cluster-announce-port 7006
+        --cluster-announce-bus-port 17006
+        --appendonly yes
+        --save ""
+    volumes:
+      - redis-node-6-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "127.0.0.1", "-p", "7006", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  redis-cluster-init:
+    image: redis:8-alpine
+    depends_on:
+      redis-node-1: { condition: service_healthy }
+      redis-node-2: { condition: service_healthy }
+      redis-node-3: { condition: service_healthy }
+      redis-node-4: { condition: service_healthy }
+      redis-node-5: { condition: service_healthy }
+      redis-node-6: { condition: service_healthy }
+    network_mode: host
+    command: >
+      sh -c '
+        redis-cli --cluster create \
+          127.0.0.1:7001 \
+          127.0.0.1:7002 \
+          127.0.0.1:7003 \
+          127.0.0.1:7004 \
+          127.0.0.1:7005 \
+          127.0.0.1:7006 \
+          --cluster-replicas 1 \
+          --cluster-yes
+      '
+    restart: "no"
+
+volumes:
+  db_data:
+  redis-node-1-data:
+  redis-node-2-data:
+  redis-node-3-data:
+  redis-node-4-data:
+  redis-node-5-data:
+  redis-node-6-data:
 "#
 }
 

@@ -481,21 +481,20 @@ Unique constraint violations map to `AppError::Conflict` (409):
 
 ## Redis and Cache
 
-Willow Forge includes a Laravel-style Cache facade backed by Redis.
+Willow Forge includes a Laravel-style Cache facade backed by a Redis Cluster.
 
-Two connection pools are created automatically at startup:
-- **`services.redis`** — raw Redis pool (DB 0). Use for direct Redis commands.
-- **`services.cache_redis`** — cache-dedicated pool (DB 1). Use via the `Cache` facade.
+A single `Arc<ClusterClient>` is shared across all requests as `services.redis`.
+The `Cache` facade and direct Redis access both use the same client.
+If the cluster is down the app still boots — connections are established lazily per request.
 
 ### Setup
 
 ```
-REDIS_HOST=127.0.0.1
-REDIS_PORT=6379
-REDIS_PASSWORD=
-REDIS_DB=0          # raw Redis pool
-REDIS_CACHE_DB=1    # Cache facade pool
+REDIS_CLUSTER_NODES=redis://127.0.0.1:7001,redis://127.0.0.1:7002,redis://127.0.0.1:7003
 ```
+
+Provide comma-separated seed node URLs. The client auto-discovers the full cluster topology.
+Start the cluster with `docker compose up`.
 
 ### Cache facade
 
@@ -530,7 +529,7 @@ Cache::increment(&ctx, "page.views").await?;
 | `Cache::remember(&ctx, key, ttl, \|\| async {...})` | Get or compute and store |
 | `Cache::remember_forever(&ctx, key, \|\| async {...})` | Remember without TTL |
 | `Cache::forget(&ctx, key)` | Delete a key |
-| `Cache::flush(&ctx)` | FLUSHDB (cache DB only) |
+| `Cache::flush(&ctx)` | FLUSHDB on the cluster node serving the key namespace |
 | `Cache::has(&ctx, key)` | Check key existence |
 | `Cache::increment` / `Cache::decrement` | Integer counters |
 
@@ -539,7 +538,7 @@ Cache::increment(&ctx, "page.views").await?;
 ```rust
 use redis::AsyncCommands;
 
-let mut conn = ctx.state.services.redis.get().await?;
+let mut conn = ctx.state.services.redis.get_async_connection().await?;
 let _: () = conn.set_ex("raw:key", "value", 60u64).await?;
 let val: Option<String> = conn.get("raw:key").await?;
 ```
