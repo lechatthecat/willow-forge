@@ -984,8 +984,7 @@ pub fn view_welcome() -> &'static str {
 
 <h2>Getting Started</h2>
 <p>Start the database and Redis cluster with Docker:</p>
-<pre><code>docker compose -f docker/docker-compose.yml up -d
-docker compose -f docker/docker-compose.yml up -d --build</code></pre>
+<pre><code>docker compose -f docker/docker-compose.yml up -d --build</code></pre>
 
 <h2>Available Routes</h2>
 <table>
