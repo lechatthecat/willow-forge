@@ -264,6 +264,57 @@ async fn not_found() -> impl axum::response::IntoResponse {
 .fallback(not_found)
 ```
 
+### JSON vs HTML — expectsJson()
+
+`app/Exceptions/Handler.rs` decides whether to render an HTML view or pass through JSON using `expects_json()`, which mirrors Laravel's `$request->expectsJson()`:
+
+| Request | Result |
+|---------|--------|
+| Browser (`Accept: text/html`) | HTML error view |
+| `curl` (no Accept header) | HTML error view |
+| `curl -H "Accept: application/json"` | JSON |
+| Axios / XHR (`X-Requested-With: XMLHttpRequest`) | JSON |
+| `fetch()` with explicit JSON Accept | JSON |
+
+To force JSON for all `/api/*` routes regardless of headers (common Laravel pattern via `shouldRenderJsonWhen`), edit `expects_json()` in `app/Exceptions/Handler.rs`:
+
+```rust
+fn expects_json(request: &Request) -> bool {
+    let is_api = request.uri().path().starts_with("/api/");
+    // ... existing header checks ...
+    is_api || wants_json || (is_ajax && accepts_any)
+}
+```
+
+### Customizing API error responses
+
+**Option 1 — Return a custom response directly from a controller (full override):**
+
+```rust
+pub async fn show(ctx: Context) -> impl IntoResponse {
+    (StatusCode::NOT_FOUND, Json(json!({
+        "error": "user_not_found",
+        "message": "No user with that ID exists."
+    })))
+}
+```
+
+**Option 2 — Edit `app/errors.rs` to change the JSON format for an existing error:**
+
+```rust
+AppError::NotFound => (
+    StatusCode::NOT_FOUND,
+    Json(json!({ "error": "not_found", "message": "Resource not found" })),
+).into_response(),
+```
+
+**Option 3 — Add a new variant to `AppError` for a specific case:**
+
+```rust
+#[error("User not found: {0}")]
+UserNotFound(i32),   // maps to 404 with the user's ID
+```
+
 ### Customizing error handling
 
 Open `app/Exceptions/Handler.rs` to add shared logic for all errors — logging, alerting, custom headers:
@@ -424,6 +475,73 @@ Unique constraint violations map to `AppError::Conflict` (409):
         => AppError::Conflict("Email already taken.".to_string()),
     other => AppError::Database(other),
 })?
+```
+
+---
+
+## Redis and Cache
+
+Willow Forge includes a Laravel-style Cache facade backed by Redis.
+
+Two connection pools are created automatically at startup:
+- **`services.redis`** — raw Redis pool (DB 0). Use for direct Redis commands.
+- **`services.cache_redis`** — cache-dedicated pool (DB 1). Use via the `Cache` facade.
+
+### Setup
+
+```
+REDIS_HOST=127.0.0.1
+REDIS_PORT=6379
+REDIS_PASSWORD=
+REDIS_DB=0          # raw Redis pool
+REDIS_CACHE_DB=1    # Cache facade pool
+```
+
+### Cache facade
+
+```rust
+use std::time::Duration;
+use myapp::{Cache, Context, AppError};
+
+// Get or compute-and-store (most common pattern)
+let users = Cache::remember(&ctx, "users.all", Duration::from_secs(300), || async {
+    sqlx::query_as::<_, User>("SELECT * FROM users")
+        .fetch_all(&ctx.state.services.db)
+        .await
+        .map_err(AppError::from)
+}).await?;
+
+// Simple get / put
+Cache::put(&ctx, "greeting", &"hello", Duration::from_secs(60)).await?;
+let val: Option<String> = Cache::get(&ctx, "greeting").await?;
+
+// Delete
+Cache::forget(&ctx, "greeting").await?;
+
+// Counters
+Cache::increment(&ctx, "page.views").await?;
+```
+
+| Method | Description |
+|--------|-------------|
+| `Cache::get::<T>(&ctx, key)` | Retrieve value; `None` on cache miss |
+| `Cache::put(&ctx, key, &val, ttl)` | Store with TTL |
+| `Cache::put_forever(&ctx, key, &val)` | Store with no expiry |
+| `Cache::remember(&ctx, key, ttl, \|\| async {...})` | Get or compute and store |
+| `Cache::remember_forever(&ctx, key, \|\| async {...})` | Remember without TTL |
+| `Cache::forget(&ctx, key)` | Delete a key |
+| `Cache::flush(&ctx)` | FLUSHDB (cache DB only) |
+| `Cache::has(&ctx, key)` | Check key existence |
+| `Cache::increment` / `Cache::decrement` | Integer counters |
+
+### Direct Redis access
+
+```rust
+use redis::AsyncCommands;
+
+let mut conn = ctx.state.services.redis.get().await?;
+let _: () = conn.set_ex("raw:key", "value", 60u64).await?;
+let val: Option<String> = conn.get("raw:key").await?;
 ```
 
 ---

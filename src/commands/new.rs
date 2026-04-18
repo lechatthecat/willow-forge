@@ -85,6 +85,7 @@ fn generate_files(base: &Path, name: &str) -> Result<()> {
     // bootstrap/
     fs::write(base.join("bootstrap/lib.rs"), app_files::bootstrap_lib_rs())?;
     fs::write(base.join("bootstrap/app_state.rs"), app_files::app_state_rs())?;
+    fs::write(base.join("bootstrap/cache.rs"), app_files::cache_rs())?;
     fs::write(base.join("bootstrap/context.rs"), app_files::context_rs())?;
     fs::write(base.join("bootstrap/validated_json.rs"), app_files::validated_json_rs())?;
     fs::write(base.join("bootstrap/view.rs"), app_files::view_rs())?;
@@ -126,6 +127,7 @@ fn generate_files(base: &Path, name: &str) -> Result<()> {
     // config/
     fs::write(base.join("config/app.toml"), app_files::config_app())?;
     fs::write(base.join("config/database.toml"), app_files::config_database())?;
+    fs::write(base.join("config/cache.toml"), app_files::config_cache())?;
 
     // .gitignore
     fs::write(base.join(".gitignore"), app_files::gitignore())?;

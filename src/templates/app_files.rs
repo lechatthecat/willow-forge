@@ -18,6 +18,8 @@ anyhow = "1"
 thiserror = "1"
 minijinja = {{ version = "2", features = ["loader"] }}
 sqlx = {{ version = "0.8", features = ["postgres", "runtime-tokio-rustls", "chrono"] }}
+redis = {{ version = "0.27", features = ["tokio-comp"] }}
+deadpool-redis = "0.18"
 chrono = {{ version = "0.4", features = ["serde"] }}
 tracing = "0.1"
 tracing-subscriber = {{ version = "0.3", features = ["env-filter"] }}
@@ -45,6 +47,12 @@ DB_PORT=5432
 DB_DATABASE=willowforge
 DB_USERNAME=postgres
 DB_PASSWORD=
+
+REDIS_HOST=127.0.0.1
+REDIS_PORT=6379
+REDIS_PASSWORD=
+REDIS_DB=0
+REDIS_CACHE_DB=1
 "#
 }
 
@@ -111,6 +119,7 @@ async fn main() -> Result<()> {{
 
 pub fn bootstrap_lib_rs() -> &'static str {
     r#"pub mod app_state;
+pub mod cache;
 pub mod context;
 pub mod validated_json;
 pub mod view;
@@ -122,7 +131,8 @@ pub mod app_errors;
 mod app_service_provider;
 
 pub use app_errors::AppError;
-pub use app_state::{AppState, Config, Services, ViewEngine};
+pub use app_state::{AppState, Config, RedisConfig, Services, ViewEngine};
+pub use cache::Cache;
 pub use context::Context;
 pub use validated_json::ValidatedJson;
 pub use view::view;
@@ -132,19 +142,34 @@ use minijinja::Environment;
 use std::sync::Arc;
 
 pub async fn bootstrap() -> Result<Arc<AppState>> {
+    let redis_config = RedisConfig {
+        host:     std::env::var("REDIS_HOST").unwrap_or_else(|_| "127.0.0.1".to_string()),
+        port:     std::env::var("REDIS_PORT").unwrap_or_else(|_| "6379".to_string())
+                      .parse().unwrap_or(6379),
+        password: std::env::var("REDIS_PASSWORD").ok().filter(|s| !s.is_empty()),
+        db:       std::env::var("REDIS_DB").unwrap_or_else(|_| "0".to_string())
+                      .parse().unwrap_or(0),
+        cache_db: std::env::var("REDIS_CACHE_DB").unwrap_or_else(|_| "1".to_string())
+                      .parse().unwrap_or(1),
+    };
+
     let config = Config {
         app_name: std::env::var("APP_NAME").unwrap_or_else(|_| "Willow Forge".to_string()),
-        app_env: std::env::var("APP_ENV").unwrap_or_else(|_| "local".to_string()),
+        app_env:  std::env::var("APP_ENV").unwrap_or_else(|_| "local".to_string()),
         app_debug: std::env::var("APP_DEBUG")
             .unwrap_or_else(|_| "true".to_string())
             .parse()
             .unwrap_or(true),
+        redis: redis_config,
     };
 
     let views = build_view_engine()?;
 
-    let db = app_service_provider::create_pool()?;
-    let services = Services { db };
+    let db          = app_service_provider::create_pool()?;
+    let redis       = app_service_provider::create_redis_pool(config.redis.db)?;
+    let cache_redis = app_service_provider::create_redis_pool(config.redis.cache_db)?;
+
+    let services = Services { db, redis, cache_redis };
 
     Ok(Arc::new(AppState {
         config,
@@ -353,6 +378,12 @@ pub enum AppError {
     #[error("Database error")]
     Database(#[from] sqlx::Error),
 
+    #[error("Cache error")]
+    Cache(#[from] deadpool_redis::PoolError),
+
+    #[error("Redis error")]
+    Redis(#[from] redis::RedisError),
+
     #[error("Conflict: {0}")]
     Conflict(String),
 
@@ -407,6 +438,24 @@ impl IntoResponse for AppError {
                     .into_response()
             }
 
+            AppError::Cache(e) => {
+                tracing::error!("Cache error: {}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "message": "Internal server error" })),
+                )
+                    .into_response()
+            }
+
+            AppError::Redis(e) => {
+                tracing::error!("Redis error: {}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "message": "Internal server error" })),
+                )
+                    .into_response()
+            }
+
             AppError::Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({ "message": "Internal server error" })),
@@ -419,7 +468,8 @@ impl IntoResponse for AppError {
 }
 
 pub fn app_state_rs() -> &'static str {
-    r#"use minijinja::Environment;
+    r#"use deadpool_redis::Pool as RedisPool;
+use minijinja::Environment;
 use sqlx::PgPool;
 
 pub type ViewEngine = Environment<'static>;
@@ -436,11 +486,27 @@ pub struct Config {
     pub app_name: String,
     pub app_env: String,
     pub app_debug: bool,
+    pub redis: RedisConfig,
+}
+
+#[derive(Debug, Clone)]
+pub struct RedisConfig {
+    pub host: String,
+    pub port: u16,
+    pub password: Option<String>,
+    pub db: i64,
+    pub cache_db: i64,
 }
 
 #[derive(Clone)]
 pub struct Services {
     pub db: PgPool,
+    /// Raw Redis pool (DB index from REDIS_DB, default 0).
+    /// Use for direct Redis commands via redis::AsyncCommands.
+    pub redis: RedisPool,
+    /// Cache-dedicated Redis pool (DB index from REDIS_CACHE_DB, default 1).
+    /// Use via the Cache facade.
+    pub cache_redis: RedisPool,
 }
 "#
 }
@@ -625,6 +691,7 @@ impl IntoResponse for ValidationError {
 
 pub fn app_service_provider() -> &'static str {
     r#"use anyhow::{Context, Result};
+use deadpool_redis::{Config as RedisPoolConfig, Pool as RedisPool, Runtime};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 
@@ -648,6 +715,24 @@ pub fn create_pool() -> Result<PgPool> {
         .with_context(|| format!(
             "Failed to configure Postgres pool for {}:{}/{}",
             host, port, database
+        ))
+}
+
+pub fn create_redis_pool(db: i64) -> Result<RedisPool> {
+    let host     = std::env::var("REDIS_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let port     = std::env::var("REDIS_PORT").unwrap_or_else(|_| "6379".to_string());
+    let password = std::env::var("REDIS_PASSWORD").ok().filter(|s| !s.is_empty());
+
+    let url = match &password {
+        Some(pw) => format!("redis://:{}@{}:{}/{}", pw, host, port, db),
+        None     => format!("redis://{}:{}/{}", host, port, db),
+    };
+
+    RedisPoolConfig::from_url(url)
+        .create_pool(Some(Runtime::Tokio1))
+        .with_context(|| format!(
+            "Failed to configure Redis pool for {}:{}/{}",
+            host, port, db
         ))
 }
 "#
@@ -831,15 +916,37 @@ use serde_json::json;
 use {name}::Context;
 
 pub async fn index(ctx: Context) -> impl IntoResponse {{
-    let connected = tokio::time::timeout(
+    // Both checks run concurrently — neither blocks the other.
+    let (db, redis) = tokio::join!(
+        check_db(&ctx),
+        check_redis(&ctx),
+    );
+
+    Json(json!({{ "db": db, "redis": redis }}))
+}}
+
+async fn check_db(ctx: &Context) -> bool {{
+    tokio::time::timeout(
         std::time::Duration::from_secs(2),
         sqlx::query("SELECT 1").execute(&ctx.state.services.db),
     )
     .await
     .map(|r| r.is_ok())
-    .unwrap_or(false);
+    .unwrap_or(false)
+}}
 
-    Json(json!({{ "connected": connected }}))
+async fn check_redis(ctx: &Context) -> bool {{
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        async {{
+            match ctx.state.services.redis.get().await {{
+                Ok(mut conn) => redis::cmd("PING").query_async::<String>(&mut conn).await.is_ok(),
+                Err(_) => false,
+            }}
+        }},
+    )
+    .await
+    .unwrap_or(false)
 }}
 "#,
         name = name
@@ -905,6 +1012,7 @@ pub fn view_welcome() -> &'static str {
     <li><strong>Environment:</strong> {{ app_env }}</li>
     <li><strong>View engine:</strong> MiniJinja</li>
     <li><strong>Database:</strong> <span id="db-status">checking...</span></li>
+    <li><strong>Redis:</strong> <span id="redis-status">checking...</span></li>
 </ul>
 
 <h2>Available Routes</h2>
@@ -917,7 +1025,7 @@ pub fn view_welcome() -> &'static str {
         <tr><td><code>GET</code></td><td><code><a href="/api/users">/api/users</a></code></td><td>List all users <span class="badge badge-db" id="db-badge-1">DB</span></td></tr>
         <tr><td><code>POST</code></td><td><code>/api/users</code></td><td>Create a new user <span class="badge badge-db" id="db-badge-2">DB</span></td></tr>
         <tr><td><code>GET</code></td><td><code><a href="/api/users/mock">/api/users/mock</a></code></td><td>List users (mock JSON, no DB)</td></tr>
-        <tr><td><code>GET</code></td><td><code><a href="/api/status">/api/status</a></code></td><td>Database connection status</td></tr>
+        <tr><td><code>GET</code></td><td><code><a href="/api/status">/api/status</a></code></td><td>Database and Redis connection status</td></tr>
     </tbody>
 </table>
 
@@ -925,24 +1033,33 @@ pub fn view_welcome() -> &'static str {
     fetch('/api/status')
         .then(r => r.json())
         .then(data => {
-            const ok = data.connected;
-            document.getElementById('db-status').textContent = ok ? 'Connected ✓' : 'Not connected ✗';
-
-            const cls = ok ? 'badge-db-ok' : 'badge-db-off';
-            const label = ok ? 'DB — you are connected' : 'DB — you are not connected';
+            // DB status
+            const dbOk = data.db;
+            document.getElementById('db-status').textContent = dbOk ? 'Connected ✓' : 'Not connected ✗';
+            const dbCls = dbOk ? 'badge-db-ok' : 'badge-db-off';
+            const dbLabel = dbOk ? 'DB — connected' : 'DB — not connected';
             ['db-badge-1', 'db-badge-2'].forEach(id => {
                 const el = document.getElementById(id);
-                el.className = 'badge ' + cls;
-                el.textContent = label;
+                el.className = 'badge ' + dbCls;
+                el.textContent = dbLabel;
             });
+
+            // Redis status
+            const redisOk = data.redis;
+            const redisEl = document.getElementById('redis-status');
+            redisEl.textContent = redisOk ? 'Connected ✓' : 'Not connected ✗';
+            redisEl.style.color = redisOk ? '#0a3622' : '#58151c';
         })
         .catch(() => {
             document.getElementById('db-status').textContent = 'Not connected ✗';
             ['db-badge-1', 'db-badge-2'].forEach(id => {
                 const el = document.getElementById(id);
                 el.className = 'badge badge-db-off';
-                el.textContent = 'DB — you are not connected';
+                el.textContent = 'DB — not connected';
             });
+            const redisEl = document.getElementById('redis-status');
+            redisEl.textContent = 'Not connected ✗';
+            redisEl.style.color = '#58151c';
         });
 </script>
 {% endblock %}
@@ -1108,6 +1225,205 @@ pub fn gitignore() -> &'static str {
 /storage/cache/*
 .DS_Store
 Cargo.lock
+"#
+}
+
+pub fn cache_rs() -> &'static str {
+    r#"//! Laravel-like Cache facade backed by Redis.
+//!
+//! All methods take `&Context` as their first argument to access the cache Redis pool.
+//! Values are serialized as JSON, so any `Serialize + DeserializeOwned` type is supported.
+//!
+//! # Example
+//! ```rust,ignore
+//! use std::time::Duration;
+//!
+//! // Get or compute and store for 5 minutes
+//! let users = Cache::remember(&ctx, "users.all", Duration::from_secs(300), || async {
+//!     sqlx::query_as::<_, User>("SELECT * FROM users")
+//!         .fetch_all(&ctx.state.services.db)
+//!         .await
+//!         .map_err(AppError::from)
+//! }).await?;
+//!
+//! // Direct put / get
+//! Cache::put(&ctx, "greeting", &"hello", Duration::from_secs(60)).await?;
+//! let val: Option<String> = Cache::get(&ctx, "greeting").await?;
+//!
+//! // Remove a key
+//! Cache::forget(&ctx, "greeting").await?;
+//! ```
+
+use std::time::Duration;
+
+use redis::AsyncCommands;
+use serde::{de::DeserializeOwned, Serialize};
+
+use crate::app_errors::AppError;
+use crate::context::Context;
+
+pub struct Cache;
+
+impl Cache {
+    /// Retrieve a cached value. Returns `None` on a cache miss.
+    pub async fn get<T: DeserializeOwned>(
+        ctx: &Context,
+        key: &str,
+    ) -> Result<Option<T>, AppError> {
+        let mut conn = ctx.state.services.cache_redis.get().await?;
+        let raw: Option<String> = conn.get(key).await?;
+        match raw {
+            None => Ok(None),
+            Some(json) => {
+                let value = serde_json::from_str(&json)
+                    .map_err(|e| redis::RedisError::from((
+                        redis::ErrorKind::TypeError,
+                        "JSON deserialization failed",
+                        e.to_string(),
+                    )))?;
+                Ok(Some(value))
+            }
+        }
+    }
+
+    /// Store a value with a TTL.
+    pub async fn put<T: Serialize>(
+        ctx: &Context,
+        key: &str,
+        value: &T,
+        ttl: Duration,
+    ) -> Result<(), AppError> {
+        let json = serde_json::to_string(value)
+            .map_err(|e| redis::RedisError::from((
+                redis::ErrorKind::TypeError,
+                "JSON serialization failed",
+                e.to_string(),
+            )))?;
+        let mut conn = ctx.state.services.cache_redis.get().await?;
+        let secs = ttl.as_secs().max(1);
+        let _: () = conn.set_ex(key, json, secs).await?;
+        Ok(())
+    }
+
+    /// Store a value with no expiry.
+    pub async fn put_forever<T: Serialize>(
+        ctx: &Context,
+        key: &str,
+        value: &T,
+    ) -> Result<(), AppError> {
+        let json = serde_json::to_string(value)
+            .map_err(|e| redis::RedisError::from((
+                redis::ErrorKind::TypeError,
+                "JSON serialization failed",
+                e.to_string(),
+            )))?;
+        let mut conn = ctx.state.services.cache_redis.get().await?;
+        let _: () = conn.set(key, json).await?;
+        Ok(())
+    }
+
+    /// Get a cached value, or compute it with `f`, store it, and return it.
+    ///
+    /// The closure is only called on a cache miss.
+    pub async fn remember<T, F, Fut>(
+        ctx: &Context,
+        key: &str,
+        ttl: Duration,
+        f: F,
+    ) -> Result<T, AppError>
+    where
+        T: Serialize + DeserializeOwned,
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<T, AppError>>,
+    {
+        if let Some(cached) = Self::get::<T>(ctx, key).await? {
+            return Ok(cached);
+        }
+        let value = f().await?;
+        Self::put(ctx, key, &value, ttl).await?;
+        Ok(value)
+    }
+
+    /// Like `remember` but stores the value with no expiry.
+    pub async fn remember_forever<T, F, Fut>(
+        ctx: &Context,
+        key: &str,
+        f: F,
+    ) -> Result<T, AppError>
+    where
+        T: Serialize + DeserializeOwned,
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<T, AppError>>,
+    {
+        if let Some(cached) = Self::get::<T>(ctx, key).await? {
+            return Ok(cached);
+        }
+        let value = f().await?;
+        Self::put_forever(ctx, key, &value).await?;
+        Ok(value)
+    }
+
+    /// Delete a cached key. Returns `Ok(())` whether or not the key existed.
+    pub async fn forget(ctx: &Context, key: &str) -> Result<(), AppError> {
+        let mut conn = ctx.state.services.cache_redis.get().await?;
+        let _: () = conn.del(key).await?;
+        Ok(())
+    }
+
+    /// Flush all keys in the cache database (FLUSHDB).
+    /// Safe because the cache uses its own DB index, separate from the raw Redis pool.
+    pub async fn flush(ctx: &Context) -> Result<(), AppError> {
+        let mut conn = ctx.state.services.cache_redis.get().await?;
+        let _: () = redis::cmd("FLUSHDB").query_async(&mut conn).await?;
+        Ok(())
+    }
+
+    /// Check whether a key exists in the cache.
+    pub async fn has(ctx: &Context, key: &str) -> Result<bool, AppError> {
+        let mut conn = ctx.state.services.cache_redis.get().await?;
+        let exists: bool = conn.exists(key).await?;
+        Ok(exists)
+    }
+
+    /// Increment an integer counter by 1. Creates the key at 0 if absent.
+    pub async fn increment(ctx: &Context, key: &str) -> Result<i64, AppError> {
+        Self::increment_by(ctx, key, 1).await
+    }
+
+    /// Increment an integer counter by `delta`. Creates the key at 0 if absent.
+    pub async fn increment_by(ctx: &Context, key: &str, delta: i64) -> Result<i64, AppError> {
+        let mut conn = ctx.state.services.cache_redis.get().await?;
+        let result: i64 = conn.incr(key, delta).await?;
+        Ok(result)
+    }
+
+    /// Decrement an integer counter by 1.
+    pub async fn decrement(ctx: &Context, key: &str) -> Result<i64, AppError> {
+        Self::decrement_by(ctx, key, 1).await
+    }
+
+    /// Decrement an integer counter by `delta`.
+    pub async fn decrement_by(ctx: &Context, key: &str, delta: i64) -> Result<i64, AppError> {
+        let mut conn = ctx.state.services.cache_redis.get().await?;
+        let result: i64 = conn.decr(key, delta).await?;
+        Ok(result)
+    }
+}
+"#
+}
+
+pub fn config_cache() -> &'static str {
+    r#"# Cache configuration
+# These values are for documentation. The app reads env vars at runtime.
+# Set REDIS_* in your .env file to override.
+
+[cache]
+store = "redis"
+host = "127.0.0.1"
+port = 6379
+
+# DB index used by the Cache facade (separate from the raw Redis pool)
+db = 1
 "#
 }
 
