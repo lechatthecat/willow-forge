@@ -85,15 +85,7 @@ fn generate_files(base: &Path, name: &str) -> Result<()> {
 
     // bootstrap/
     fs::write(base.join("bootstrap/lib.rs"), app_files::bootstrap_lib_rs())?;
-    fs::write(base.join("bootstrap/app_state.rs"), app_files::app_state_rs())?;
-    fs::write(base.join("bootstrap/cache.rs"), app_files::cache_rs())?;
-    fs::write(base.join("bootstrap/context.rs"), app_files::context_rs())?;
-    fs::write(base.join("bootstrap/validated_json.rs"), app_files::validated_json_rs())?;
-    fs::write(base.join("bootstrap/view.rs"), app_files::view_rs())?;
     fs::write(base.join("bootstrap/middleware.rs"), app_files::bootstrap_middleware_rs(&crate_name))?;
-
-    // app/
-    fs::write(base.join("app/errors.rs"), app_files::app_errors_rs())?;
     fs::write(base.join("app/Exceptions/Handler.rs"), app_files::exception_handler_rs(&crate_name))?;
     fs::write(base.join("app/Http/Middleware/LogRequest.rs"), app_files::middleware_log_request_rs())?;
     fs::write(base.join("app/Providers/AppServiceProvider.rs"), app_files::app_service_provider())?;

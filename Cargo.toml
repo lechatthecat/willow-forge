@@ -1,3 +1,7 @@
+[workspace]
+members = [".", "runtime"]
+resolver = "2"
+
 [package]
 name = "willow-forge"
 version = "0.1.0"
