@@ -1362,8 +1362,7 @@ impl Cache {
 
     /// Get a cached value, or compute it with `f`, store it, and return it.
     ///
-    /// If Redis is unavailable the closure is called directly and the result is
-    /// returned without caching (soft-fail — the app keeps working).
+    /// The closure is only called on a cache miss.
     pub async fn remember<T, F, Fut>(
         ctx: &Context,
         key: &str,
@@ -1374,21 +1373,16 @@ impl Cache {
         T: Serialize + DeserializeOwned,
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Result<T, AppError>>,
-    {
-        match Self::get::<T>(ctx, key).await {
-            Ok(Some(cached)) => return Ok(cached),
-            Ok(None) => {}
-            Err(e) => tracing::warn!("Cache::remember get failed ({}), falling back to source", e),
-        }
+    {{
+        if let Some(cached) = Self::get::<T>(ctx, key).await? {{
+            return Ok(cached);
+        }}
         let value = f().await?;
-        if let Err(e) = Self::put(ctx, key, &value, ttl).await {
-            tracing::warn!("Cache::remember put failed ({}), value not cached", e);
-        }
+        Self::put(ctx, key, &value, ttl).await?;
         Ok(value)
-    }
+    }}
 
     /// Like `remember` but stores the value with no expiry.
-    /// Falls back to the closure if Redis is unavailable.
     pub async fn remember_forever<T, F, Fut>(
         ctx: &Context,
         key: &str,
@@ -1398,33 +1392,21 @@ impl Cache {
         T: Serialize + DeserializeOwned,
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Result<T, AppError>>,
-    {
-        match Self::get::<T>(ctx, key).await {
-            Ok(Some(cached)) => return Ok(cached),
-            Ok(None) => {}
-            Err(e) => tracing::warn!("Cache::remember_forever get failed ({}), falling back to source", e),
-        }
+    {{
+        if let Some(cached) = Self::get::<T>(ctx, key).await? {{
+            return Ok(cached);
+        }}
         let value = f().await?;
-        if let Err(e) = Self::put_forever(ctx, key, &value).await {
-            tracing::warn!("Cache::remember_forever put failed ({}), value not cached", e);
-        }
+        Self::put_forever(ctx, key, &value).await?;
         Ok(value)
-    }
+    }}
 
     /// Delete a cached key. Returns `Ok(())` whether or not the key existed.
-    /// If Redis is unavailable the error is logged and `Ok(())` is returned
-    /// so that the caller (e.g. a write endpoint) is not blocked.
-    pub async fn forget(ctx: &Context, key: &str) -> Result<(), AppError> {
-        match ctx.state.services.redis.get_async_connection().await {
-            Ok(mut conn) => {
-                if let Err(e) = conn.del::<_, ()>(key).await {
-                    tracing::warn!("Cache::forget del failed ({}), cache may be stale", e);
-                }
-            }
-            Err(e) => tracing::warn!("Cache::forget connect failed ({}), cache may be stale", e),
-        }
+    pub async fn forget(ctx: &Context, key: &str) -> Result<(), AppError> {{
+        let mut conn = ctx.state.services.redis.get_async_connection().await?;
+        let _: () = conn.del(key).await?;
         Ok(())
-    }
+    }}
 
     /// Flush all keys in the cache database (FLUSHDB).
     /// Safe because the cache uses its own DB index, separate from the raw Redis pool.
