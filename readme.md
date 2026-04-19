@@ -10,6 +10,9 @@ Install the CLI from the repo root:
 
 ```
 cargo install --path .
+
+# If you don't need this anymore:
+# cargo uninstall willow-forge
 ```
 
 Then scaffold a new application:
@@ -25,7 +28,12 @@ The server starts on `http://localhost:3000`.
 Alternatively, run the CLI without installing:
 
 ```
+cd {willow-forge root}
 cargo run -- new my-app
+cd my-app
+docker compose -f docker/docker-compose.yml up -d --build
+cargo run --manifest-path ../Cargo.toml -- migrate
+cargo run
 ```
 
 ---

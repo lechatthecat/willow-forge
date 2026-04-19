@@ -781,7 +781,7 @@ use serde::Deserialize;
 use serde_json::json;
 use validator::Validate;
 
-use {name}::{{AppError, Context, ValidatedJson}};
+use {name}::{{AppError, Cache, Context, ValidatedJson}};
 use user_model::User;
 
 // ============================================================
@@ -803,11 +803,30 @@ use user_model::User;
 //   sqlx::Error     → AppError::Database    (via #[from])
 //   ViewError       → AppError::View        (via #[from])
 //   ValidationError → AppError::Validation  (via #[from])
+//   redis::RedisError → AppError::Redis     (via #[from])
 //
 //   let users = sqlx::query_as::<_, User>(...).fetch_all(pool).await?;
 //   // sqlx::Error is automatically converted to AppError::Database
 //
+// --- Using the Cache facade (Redis) ---
+//
+//   // Cache a DB query for 60 seconds
+//   let users = Cache::remember(&ctx, "users.all", Duration::from_secs(60), || async {{
+//       sqlx::query_as::<_, User>("SELECT ...").fetch_all(pool).await.map_err(AppError::from)
+//   }}).await?;
+//
+//   // Store a value
+//   Cache::put(&ctx, "my.key", &value, Duration::from_secs(60)).await?;
+//
+//   // Read a value
+//   let val: Option<String> = Cache::get(&ctx, "my.key").await?;
+//
+//   // Delete a value
+//   Cache::forget(&ctx, "my.key").await?;
+//
 // ============================================================
+
+use std::time::Duration;
 
 #[derive(Debug, Deserialize, Validate)]
 pub struct StoreUserRequest {{
@@ -821,18 +840,26 @@ pub struct StoreUserRequest {{
     pub password: String,
 }}
 
+/// GET /api/users
+/// Returns all users, cached in Redis for 60 seconds.
 pub async fn index(ctx: Context) -> Result<impl IntoResponse, AppError> {{
-    let pool = &ctx.state.services.db;
+    let pool = ctx.state.services.db.clone();
 
-    let users = sqlx::query_as::<_, User>(
-        "SELECT id, name, email, created_at FROM users ORDER BY id",
-    )
-    .fetch_all(pool)
+    let users = Cache::remember(&ctx, "users.all", Duration::from_secs(60), || async move {{
+        sqlx::query_as::<_, User>(
+            "SELECT id, name, email, created_at FROM users ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await
+        .map_err(AppError::from)
+    }})
     .await?;
 
     Ok((StatusCode::OK, Json(json!({{ "data": users }}))))
 }}
 
+/// POST /api/users
+/// Creates a user in the DB and invalidates the users.all cache.
 pub async fn store(
     ctx: Context,
     ValidatedJson(req): ValidatedJson<StoreUserRequest>,
@@ -857,6 +884,9 @@ pub async fn store(
         }}
         other => AppError::Database(other),
     }})?;
+
+    // Invalidate the cached user list so the next GET reflects the new user.
+    Cache::forget(&ctx, "users.all").await?;
 
     Ok((StatusCode::CREATED, Json(json!({{ "ok": true, "data": user }}))))
 }}
@@ -1021,6 +1051,13 @@ docker volume inspect &lt;volume-name&gt;</code></pre>
 <h3>Other commands</h3>
 <p>Flush Redis cache:</p>
 <pre><code>docker exec -it redis-node-1 redis-cli -p 7001 FLUSHALL</code></pre>
+
+<p>If Redis cluster init fails with <code>[ERR] Node is not empty</code>, reset all nodes before re-initializing:</p>
+<pre><code>for port in 7001 7002 7003 7004 7005 7006; do
+  docker exec redis-node-$(( port - 7000 )) redis-cli -p $port FLUSHALL
+  docker exec redis-node-$(( port - 7000 )) redis-cli -p $port CLUSTER RESET
+done
+docker compose -f docker/docker-compose.yml restart redis-cluster-init</code></pre>
 
 <h3>Delete everything <span style="color:#b02a37">⚠ DANGER</span></h3>
 <p style="color:#b02a37"><strong>Do NOT run this if you have any container or image you want to keep. This will delete every Docker image on your PC.</strong></p>
@@ -1325,7 +1362,8 @@ impl Cache {
 
     /// Get a cached value, or compute it with `f`, store it, and return it.
     ///
-    /// The closure is only called on a cache miss.
+    /// If Redis is unavailable the closure is called directly and the result is
+    /// returned without caching (soft-fail — the app keeps working).
     pub async fn remember<T, F, Fut>(
         ctx: &Context,
         key: &str,
@@ -1337,15 +1375,20 @@ impl Cache {
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Result<T, AppError>>,
     {
-        if let Some(cached) = Self::get::<T>(ctx, key).await? {
-            return Ok(cached);
+        match Self::get::<T>(ctx, key).await {
+            Ok(Some(cached)) => return Ok(cached),
+            Ok(None) => {}
+            Err(e) => tracing::warn!("Cache::remember get failed ({}), falling back to source", e),
         }
         let value = f().await?;
-        Self::put(ctx, key, &value, ttl).await?;
+        if let Err(e) = Self::put(ctx, key, &value, ttl).await {
+            tracing::warn!("Cache::remember put failed ({}), value not cached", e);
+        }
         Ok(value)
     }
 
     /// Like `remember` but stores the value with no expiry.
+    /// Falls back to the closure if Redis is unavailable.
     pub async fn remember_forever<T, F, Fut>(
         ctx: &Context,
         key: &str,
@@ -1356,18 +1399,30 @@ impl Cache {
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Result<T, AppError>>,
     {
-        if let Some(cached) = Self::get::<T>(ctx, key).await? {
-            return Ok(cached);
+        match Self::get::<T>(ctx, key).await {
+            Ok(Some(cached)) => return Ok(cached),
+            Ok(None) => {}
+            Err(e) => tracing::warn!("Cache::remember_forever get failed ({}), falling back to source", e),
         }
         let value = f().await?;
-        Self::put_forever(ctx, key, &value).await?;
+        if let Err(e) = Self::put_forever(ctx, key, &value).await {
+            tracing::warn!("Cache::remember_forever put failed ({}), value not cached", e);
+        }
         Ok(value)
     }
 
     /// Delete a cached key. Returns `Ok(())` whether or not the key existed.
+    /// If Redis is unavailable the error is logged and `Ok(())` is returned
+    /// so that the caller (e.g. a write endpoint) is not blocked.
     pub async fn forget(ctx: &Context, key: &str) -> Result<(), AppError> {
-        let mut conn = ctx.state.services.redis.get_async_connection().await?;
-        let _: () = conn.del(key).await?;
+        match ctx.state.services.redis.get_async_connection().await {
+            Ok(mut conn) => {
+                if let Err(e) = conn.del::<_, ()>(key).await {
+                    tracing::warn!("Cache::forget del failed ({}), cache may be stale", e);
+                }
+            }
+            Err(e) => tracing::warn!("Cache::forget connect failed ({}), cache may be stale", e),
+        }
         Ok(())
     }
 
