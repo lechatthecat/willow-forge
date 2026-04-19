@@ -1030,6 +1030,23 @@ pub fn view_welcome() -> &'static str {
     </tbody>
 </table>
 
+<h2>API Examples</h2>
+
+<h3>POST /api/users — success</h3>
+<pre><code>curl -s -X POST http://localhost:3000/api/users \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Alice","email":"alice@example.com","password":"secret123"}' | jq</code></pre>
+
+<h3>POST /api/users — validation error (422)</h3>
+<pre><code>curl -s -X POST http://localhost:3000/api/users \
+  -H "Content-Type: application/json" \
+  -d '{"name":"","email":"not-an-email","password":"short"}' | jq</code></pre>
+
+<h3>POST /api/users — malformed JSON (400)</h3>
+<pre><code>curl -s -X POST http://localhost:3000/api/users \
+  -H "Content-Type: application/json" \
+  -d 'invalid' | jq</code></pre>
+
 <h2>Docker Hints</h2>
 <h3>Get inside a container</h3>
 <pre><code>docker exec -it redis-node-1 sh</code></pre>
