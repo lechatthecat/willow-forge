@@ -103,6 +103,7 @@ fn generate_files(base: &Path, name: &str) -> Result<()> {
     fs::write(base.join("resources/views/welcome.jinja.html"), app_files::view_welcome())?;
     fs::write(base.join("resources/views/errors/404.jinja.html"), app_files::view_error_404_html())?;
     fs::write(base.join("resources/views/errors/500.jinja.html"), app_files::view_error_500_html())?;
+    fs::write(base.join("resources/views/errors/generic.jinja.html"), app_files::view_error_generic_html())?;
 
     // app/Models/
     fs::write(base.join("app/Models/User.rs"), app_files::user_model_rs())?;

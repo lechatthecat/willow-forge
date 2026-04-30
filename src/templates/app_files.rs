@@ -9,18 +9,18 @@ edition = "2024"
 
 [dependencies]
 willow-forge-runtime = {{ git = "https://github.com/lechatthecat/willow" }}
-axum = "0.7"
+axum = "0.8.9"
 tokio = {{ version = "1", features = ["full"] }}
-tower = "0.4"
-tower-http = {{ version = "0.5", features = ["cors", "trace"] }}
+tower = "0.5.3"
+tower-http = {{ version = "0.6.8", features = ["cors", "trace"] }}
 serde = {{ version = "1", features = ["derive"] }}
 serde_json = "1"
-validator = {{ version = "0.18", features = ["derive"] }}
+validator = {{ version = "0.20.0", features = ["derive"] }}
 dotenvy = "0.15"
 anyhow = "1"
 minijinja = {{ version = "2", features = ["loader"] }}
 sqlx = {{ version = "0.8", features = ["postgres", "runtime-tokio-rustls", "chrono"] }}
-redis = {{ version = "0.27", features = ["tokio-comp", "cluster-async"] }}
+redis = {{ version = "1.2.0", features = ["tokio-comp", "cluster-async"] }}
 chrono = {{ version = "0.4", features = ["serde"] }}
 tracing = "0.1"
 tracing-subscriber = {{ version = "0.3", features = ["env-filter"] }}
@@ -286,13 +286,17 @@ pub async fn render(
     let code = status.as_u16();
     let template_name = format!("errors.{{}}", code);
 
-    if let Ok(tmpl) = state.views.get_template(&template_name) {{
-        let data = context! {{
-            code     => code,
-            message  => status.canonical_reason().unwrap_or("Error"),
-            app_name => state.config.app_name.clone(),
-            app_env  => state.config.app_env.clone(),
-        }};
+    let data = context! {{
+        code     => code,
+        message  => status.canonical_reason().unwrap_or("Error"),
+        app_name => state.config.app_name.clone(),
+        app_env  => state.config.app_env.clone(),
+    }};
+
+    let tmpl = state.views.get_template(&template_name)
+        .or_else(|_| state.views.get_template("errors.generic"));
+
+    if let Ok(tmpl) = tmpl {{
         if let Ok(html) = tmpl.render(data) {{
             return (status, Html(html)).into_response();
         }}
@@ -322,6 +326,18 @@ pub fn view_error_500_html() -> &'static str {
     r#"{% extends "layouts.app" %}
 
 {% block title %}500 — Server Error | {{ app_name }}{% endblock %}
+
+{% block content %}
+<h1>{{ code }}</h1>
+<p>{{ message }}</p>
+{% endblock %}
+"#
+}
+
+pub fn view_error_generic_html() -> &'static str {
+    r#"{% extends "layouts.app" %}
+
+{% block title %}{{ code }} — {{ message }} | {{ app_name }}{% endblock %}
 
 {% block content %}
 <h1>{{ code }}</h1>
@@ -735,19 +751,15 @@ docker volume inspect &lt;volume-name&gt;</code></pre>
 <pre><code>docker exec -it redis-node-1 redis-cli -p 7001 FLUSHALL</code></pre>
 
 <p>If Redis cluster init fails with <code>[ERR] Node is not empty</code>, reset all nodes before re-initializing:</p>
+<p>bash / Git Bash:</p>
 <pre><code>for port in 7001 7002 7003 7004 7005 7006; do
   docker exec redis-node-$(( port - 7000 )) redis-cli -p $port FLUSHALL
   docker exec redis-node-$(( port - 7000 )) redis-cli -p $port CLUSTER RESET
 done
 docker compose -f docker/docker-compose.yml restart redis-cluster-init</code></pre>
+<p>PowerShell:</p>
+<pre><code>foreach ($port in 7001, 7002, 7003, 7004, 7005, 7006) { $node = $port - 7000; docker exec redis-node-$node redis-cli -p $port FLUSHALL; docker exec redis-node-$node redis-cli -p $port CLUSTER RESET }; docker compose -f docker/docker-compose.yml restart redis-cluster-init</code></pre>
 
-<h3>Delete everything <span style="color:#b02a37">⚠ DANGER</span></h3>
-<p style="color:#b02a37"><strong>Do NOT run this if you have any container or image you want to keep. This will delete every Docker image on your PC.</strong></p>
-<pre><code>docker stop $(docker ps -aq)
-docker compose -f docker/docker-compose.yml down -v --rmi all --remove-orphans
-docker rmi $(docker images -q) -f
-docker volume rm $(docker volume ls -q)
-docker system prune --force --volumes --all</code></pre>
 
 <script>
     fetch('/api/status')

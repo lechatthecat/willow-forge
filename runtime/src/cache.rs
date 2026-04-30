@@ -44,12 +44,10 @@ impl Cache {
         match raw {
             None => Ok(None),
             Some(json) => {
-                let value = serde_json::from_str(&json)
-                    .map_err(|e| redis::RedisError::from((
-                        redis::ErrorKind::TypeError,
-                        "JSON deserialization failed",
-                        e.to_string(),
-                    )))?;
+                let value = serde_json::from_str(&json).map_err(|e| {
+                    tracing::error!("Cache JSON deserialization failed: {}", e);
+                    AppError::Internal
+                })?;
                 Ok(Some(value))
             }
         }
@@ -62,12 +60,10 @@ impl Cache {
         value: &T,
         ttl: Duration,
     ) -> Result<(), AppError> {
-        let json = serde_json::to_string(value)
-            .map_err(|e| redis::RedisError::from((
-                redis::ErrorKind::TypeError,
-                "JSON serialization failed",
-                e.to_string(),
-            )))?;
+        let json = serde_json::to_string(value).map_err(|e| {
+            tracing::error!("Cache JSON serialization failed: {}", e);
+            AppError::Internal
+        })?;
         let mut conn = ctx.state.services.redis.get_async_connection().await?;
         let secs = ttl.as_secs().max(1);
         let _: () = conn.set_ex(key, json, secs).await?;
@@ -80,12 +76,10 @@ impl Cache {
         key: &str,
         value: &T,
     ) -> Result<(), AppError> {
-        let json = serde_json::to_string(value)
-            .map_err(|e| redis::RedisError::from((
-                redis::ErrorKind::TypeError,
-                "JSON serialization failed",
-                e.to_string(),
-            )))?;
+        let json = serde_json::to_string(value).map_err(|e| {
+            tracing::error!("Cache JSON serialization failed: {}", e);
+            AppError::Internal
+        })?;
         let mut conn = ctx.state.services.redis.get_async_connection().await?;
         let _: () = conn.set(key, json).await?;
         Ok(())

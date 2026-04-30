@@ -1,5 +1,4 @@
 use axum::{
-    async_trait,
     extract::{FromRef, FromRequestParts},
     http::{request::Parts, StatusCode},
 };
@@ -12,7 +11,6 @@ pub struct Context {
     pub state: Arc<AppState>,
 }
 
-#[async_trait]
 impl<S> FromRequestParts<S> for Context
 where
     S: Send + Sync,

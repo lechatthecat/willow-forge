@@ -34,6 +34,15 @@ pub enum AppError {
     #[error("Conflict: {0}")]
     Conflict(String),
 
+    #[error("Service unavailable")]
+    ServiceUnavailable,
+
+    #[error("Too many requests")]
+    TooManyRequests,
+
+    #[error("{1}")]
+    Http(u16, String),
+
     #[error("Internal server error")]
     Internal,
 }
@@ -92,6 +101,24 @@ impl IntoResponse for AppError {
                     Json(json!({ "message": "Internal server error" })),
                 )
                     .into_response()
+            }
+
+            AppError::ServiceUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({ "message": "Service unavailable" })),
+            )
+                .into_response(),
+
+            AppError::TooManyRequests => (
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(json!({ "message": "Too many requests" })),
+            )
+                .into_response(),
+
+            AppError::Http(code, msg) => {
+                let status = StatusCode::from_u16(code)
+                    .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+                (status, Json(json!({ "message": msg }))).into_response()
             }
 
             AppError::Internal => (

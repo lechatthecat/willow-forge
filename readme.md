@@ -160,19 +160,22 @@ pub async fn index(ctx: Context) -> Result<impl IntoResponse, AppError> {
 
 ## Error handling
 
-`app/errors.rs` defines `AppError`, which is re-exported as `use my_app::AppError`.
+`AppError` is defined in `willow-forge-runtime` and re-exported as `use my_app::AppError`.
 
 ```rust
-#[derive(Debug, thiserror::Error)]
 pub enum AppError {
-    #[error("Not found")]             NotFound,                              // 404
-    #[error("Unauthorized")]          Unauthorized,                          // 401
-    #[error("Forbidden")]             Forbidden,                             // 403
-    #[error("Validation failed")]     Validation(#[from] ValidationError),   // 422
-    #[error("View render failed")]    View(#[from] ViewError),               // 500
-    #[error("Database error")]        Database(#[from] sqlx::Error),         // 500
-    #[error("Conflict: {0}")]         Conflict(String),                      // 409
-    #[error("Internal server error")] Internal,                              // 500
+    NotFound,                          // 404
+    Unauthorized,                      // 401
+    Forbidden,                         // 403
+    Validation(ValidationError),       // 422
+    Conflict(String),                  // 409
+    ServiceUnavailable,                // 503
+    TooManyRequests,                   // 429
+    Http(u16, String),                 // any status code
+    View(ViewError),                   // 500
+    Database(sqlx::Error),             // 500
+    Redis(redis::RedisError),          // 500
+    Internal,                          // 500
 }
 ```
 
@@ -193,6 +196,12 @@ let users = sqlx::query_as::<_, User>(...).fetch_all(pool).await?;
         => AppError::Conflict("Email already taken.".to_string()),
     other => AppError::Database(other),
 })?
+
+// 503 maintenance
+Err(AppError::ServiceUnavailable)
+
+// arbitrary status code
+Err(AppError::Http(451, "Unavailable For Legal Reasons".to_string()))
 ```
 
 ### Error responses
@@ -204,7 +213,43 @@ let users = sqlx::query_as::<_, User>(...).fetch_all(pool).await?;
 | `Forbidden` | 403 | `{"message":"Forbidden"}` |
 | `Validation` | 422 | `{"message":"The given data was invalid.","errors":{...}}` |
 | `Conflict(msg)` | 409 | `{"message":"<msg>"}` |
-| `View` / `Database` / `Internal` | 500 | `{"message":"Internal server error"}` |
+| `ServiceUnavailable` | 503 | `{"message":"Service unavailable"}` |
+| `TooManyRequests` | 429 | `{"message":"Too many requests"}` |
+| `Http(code, msg)` | `code` | `{"message":"<msg>"}` |
+| `View` / `Database` / `Redis` / `Internal` | 500 | `{"message":"Internal server error"}` |
+
+### HTML error views
+
+For browser requests, the exception handler automatically renders HTML views from `resources/views/errors/`:
+
+- `errors/404.jinja.html` — 404 specific (includes back link)
+- `errors/500.jinja.html` — 500 specific
+- `errors/generic.jinja.html` — fallback for all other codes (401, 403, 429, 503, …)
+
+To customise a specific code, create `resources/views/errors/{code}.jinja.html`. Variables available: `code`, `message`, `app_name`, `app_env`.
+
+### Route-level error handling
+
+Return errors directly in route definitions without a controller:
+
+```rust
+// routes/web.rs — maintenance mode for a specific route
+.route("/maintenance", get(|| async { Err::<(), _>(AppError::ServiceUnavailable) }))
+
+// Per-group fallback (e.g. admin-only area)
+let admin = Router::new()
+    .route("/admin/dashboard", get(dashboard))
+    .fallback(|| async { Err::<(), _>(AppError::Http(403, "Admin only".to_string())) });
+```
+
+To put the whole app into maintenance mode, change the global fallback in `src/main.rs`:
+
+```rust
+async fn maintenance() -> impl axum::response::IntoResponse {
+    AppError::ServiceUnavailable
+}
+// .fallback(maintenance)
+```
 
 ---
 
