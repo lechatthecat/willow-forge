@@ -59,6 +59,11 @@ enum Commands {
         #[arg(help = "Name of the middleware")]
         name: String,
     },
+    #[command(name = "make:auth", about = "Scaffold auth controllers, views, and requests")]
+    MakeAuth {
+        #[arg(long, help = "Scaffold REST API auth (JSON responses) instead of HTML form auth")]
+        api: bool,
+    },
 }
 
 #[tokio::main]
@@ -78,6 +83,7 @@ async fn main() -> Result<()> {
         Commands::MakeMigration { name } => commands::make::migration(&name)?,
         Commands::MakeView { name } => commands::make::view_file(&name)?,
         Commands::MakeMiddleware { name } => commands::make::middleware(&name)?,
+        Commands::MakeAuth { api } => commands::make::auth(api)?,
     }
 
     Ok(())

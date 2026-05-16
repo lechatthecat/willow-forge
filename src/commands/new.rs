@@ -31,19 +31,18 @@ pub fn execute(name: &str) -> Result<()> {
 
 fn create_directory_structure(base: &Path) -> Result<()> {
     let dirs = vec![
-        "app/Exceptions",
-        "app/Http/Controllers",
-        "app/Http/Middleware",
-        "app/Http/Requests",
-        "app/Models",
-        "app/Providers",
-        "app/Policies",
+        "src/app/Http/Controllers",
+        "src/app/Http/Middleware",
+        "src/app/Http/Requests",
+        "src/app/Models",
+        "src/app/Exceptions",
+        "src/routes",
         "bootstrap",
         "config",
         "database/migrations",
         "database/seeders",
         "database/factories",
-        "routes",
+        "resources/views/auth",
         "resources/views/layouts",
         "resources/views/errors",
         "resources/views/partials",
@@ -52,7 +51,6 @@ fn create_directory_structure(base: &Path) -> Result<()> {
         "storage/cache",
         "tests/Feature",
         "tests/Unit",
-        "src",
         "docker",
     ];
 
@@ -83,20 +81,33 @@ fn generate_files(base: &Path, name: &str) -> Result<()> {
     // src/main.rs
     fs::write(base.join("src/main.rs"), app_files::main_rs(&crate_name))?;
 
+    // src/middleware.rs
+    fs::write(base.join("src/middleware.rs"), app_files::bootstrap_middleware_rs(&crate_name))?;
+
+    // src/app/
+    fs::write(base.join("src/app/mod.rs"), app_files::src_app_mod_rs())?;
+    fs::write(base.join("src/app/Http/mod.rs"), app_files::src_app_http_mod_rs())?;
+    fs::write(base.join("src/app/Http/Controllers/mod.rs"), app_files::src_app_http_controllers_mod_rs())?;
+    fs::write(base.join("src/app/Http/Controllers/HomeController.rs"), app_files::home_controller(&crate_name))?;
+    fs::write(base.join("src/app/Http/Controllers/UserController.rs"), app_files::user_controller(&crate_name))?;
+    fs::write(base.join("src/app/Http/Controllers/StatusController.rs"), app_files::status_controller(&crate_name))?;
+    fs::write(base.join("src/app/Http/Middleware/mod.rs"), app_files::src_app_http_middleware_mod_rs())?;
+    fs::write(base.join("src/app/Http/Middleware/LogRequest.rs"), app_files::middleware_log_request_rs())?;
+    fs::write(base.join("src/app/Http/Requests/mod.rs"), app_files::src_app_http_requests_mod_rs())?;
+    fs::write(base.join("src/app/Http/Requests/StoreUserRequest.rs"), app_files::store_user_request())?;
+    fs::write(base.join("src/app/Models/mod.rs"), app_files::src_app_models_mod_rs())?;
+    fs::write(base.join("src/app/Models/User.rs"), app_files::user_model_rs())?;
+    fs::write(base.join("src/app/Exceptions/mod.rs"), app_files::src_app_exceptions_mod_rs())?;
+    fs::write(base.join("src/app/Exceptions/Handler.rs"), app_files::exception_handler_rs(&crate_name))?;
+
+    // src/routes/
+    fs::write(base.join("src/routes/mod.rs"), app_files::src_routes_mod_rs())?;
+    fs::write(base.join("src/routes/web.rs"), app_files::routes_web(&crate_name))?;
+    fs::write(base.join("src/routes/api.rs"), app_files::routes_api(&crate_name))?;
+
     // bootstrap/
     fs::write(base.join("bootstrap/lib.rs"), app_files::bootstrap_lib_rs())?;
-    fs::write(base.join("bootstrap/middleware.rs"), app_files::bootstrap_middleware_rs(&crate_name))?;
-    fs::write(base.join("app/Exceptions/Handler.rs"), app_files::exception_handler_rs(&crate_name))?;
-    fs::write(base.join("app/Http/Middleware/LogRequest.rs"), app_files::middleware_log_request_rs())?;
-    fs::write(base.join("app/Providers/AppServiceProvider.rs"), app_files::app_service_provider())?;
-    fs::write(base.join("app/Http/Controllers/HomeController.rs"), app_files::home_controller(&crate_name))?;
-    fs::write(base.join("app/Http/Controllers/UserController.rs"), app_files::user_controller(&crate_name))?;
-    fs::write(base.join("app/Http/Controllers/StatusController.rs"), app_files::status_controller(&crate_name))?;
-    fs::write(base.join("app/Http/Requests/StoreUserRequest.rs"), app_files::store_user_request())?;
-
-    // routes/
-    fs::write(base.join("routes/web.rs"), app_files::routes_web(&crate_name))?;
-    fs::write(base.join("routes/api.rs"), app_files::routes_api(&crate_name))?;
+    fs::write(base.join("bootstrap/app_service_provider.rs"), app_files::app_service_provider())?;
 
     // resources/views/
     fs::write(base.join("resources/views/layouts/app.jinja.html"), app_files::view_layout_app())?;
@@ -104,9 +115,6 @@ fn generate_files(base: &Path, name: &str) -> Result<()> {
     fs::write(base.join("resources/views/errors/404.jinja.html"), app_files::view_error_404_html())?;
     fs::write(base.join("resources/views/errors/500.jinja.html"), app_files::view_error_500_html())?;
     fs::write(base.join("resources/views/errors/generic.jinja.html"), app_files::view_error_generic_html())?;
-
-    // app/Models/
-    fs::write(base.join("app/Models/User.rs"), app_files::user_model_rs())?;
 
     // database/migrations/
     fs::write(
@@ -120,6 +128,7 @@ fn generate_files(base: &Path, name: &str) -> Result<()> {
 
     // config/
     fs::write(base.join("config/app.toml"), app_files::config_app())?;
+    fs::write(base.join("config/auth.toml"), app_files::config_auth())?;
     fs::write(base.join("config/database.toml"), app_files::config_database())?;
     fs::write(base.join("config/cache.toml"), app_files::config_cache())?;
 

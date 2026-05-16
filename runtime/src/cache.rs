@@ -43,13 +43,14 @@ impl Cache {
         let raw: Option<String> = conn.get(key).await?;
         match raw {
             None => Ok(None),
-            Some(json) => {
-                let value = serde_json::from_str(&json).map_err(|e| {
-                    tracing::error!("Cache JSON deserialization failed: {}", e);
-                    AppError::Internal
-                })?;
-                Ok(Some(value))
-            }
+            Some(json) => match serde_json::from_str::<T>(&json) {
+                Ok(value) => Ok(Some(value)),
+                Err(e) => {
+                    tracing::warn!("Cache deserialization failed for `{}`: {} — evicting", key, e);
+                    let _: () = conn.del(key).await?;
+                    Ok(None)
+                }
+            },
         }
     }
 
