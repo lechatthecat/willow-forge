@@ -23,6 +23,93 @@ fn inject_mod_decl(mod_file: &str, mod_name: &str) -> Result<()> {
     Ok(())
 }
 
+fn controller_content(name: &str) -> String {
+    format!(
+        r#"use axum::{{Json, response::IntoResponse}};
+use serde_json::json;
+
+pub async fn index() -> impl IntoResponse {{
+    Json(json!({{ "message": "{name} index" }}))
+}}
+
+pub async fn show() -> impl IntoResponse {{
+    Json(json!({{ "message": "{name} show" }}))
+}}
+
+pub async fn store() -> impl IntoResponse {{
+    Json(json!({{ "message": "{name} store" }}))
+}}
+
+pub async fn update() -> impl IntoResponse {{
+    Json(json!({{ "message": "{name} update" }}))
+}}
+
+pub async fn destroy() -> impl IntoResponse {{
+    Json(json!({{ "message": "{name} destroy" }}))
+}}
+"#,
+        name = name
+    )
+}
+
+fn request_content(name: &str) -> String {
+    format!(
+        r#"use serde::Deserialize;
+use validator::Validate;
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct {name} {{
+    // Add your fields here
+    // Example:
+    // #[validate(length(min = 1, max = 255))]
+    // pub name: String,
+}}
+"#,
+        name = name
+    )
+}
+
+fn model_content(name: &str) -> String {
+    format!(
+        r#"use serde::{{Deserialize, Serialize}};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct {name} {{
+    pub id: i64,
+    // Add your fields here
+}}
+
+impl {name} {{
+    // Add your model methods here
+}}
+"#,
+        name = name
+    )
+}
+
+fn view_template_content(name: &str) -> String {
+    format!(
+        "{{% extends \"layouts.app\" %}}\n\n{{% block title %}}{name}{{% endblock %}}\n\n{{% block content %}}\n<h1>{name}</h1>\n{{% endblock %}}\n",
+        name = name
+    )
+}
+
+fn migration_up_content(name: &str, created: &str) -> String {
+    format!(
+        "-- Migration: {name}\n-- Created:   {created}\n\n-- Write your UP migration SQL here.\n",
+        name = name,
+        created = created,
+    )
+}
+
+fn migration_down_content(name: &str, created: &str) -> String {
+    format!(
+        "-- Migration: {name} (rollback)\n-- Created:   {created}\n\n-- Write your DOWN migration SQL here.\n",
+        name = name,
+        created = created,
+    )
+}
+
 pub fn controller(name: &str) -> Result<()> {
     let path = Path::new("src/app/Http/Controllers").join(format!("{}.rs", name));
 
@@ -30,34 +117,7 @@ pub fn controller(name: &str) -> Result<()> {
         anyhow::bail!("Controller already exists: {}", path.display());
     }
 
-    let content = format!(
-        r#"use axum::{{Json, response::IntoResponse}};
-use serde_json::json;
-
-pub async fn index() -> impl IntoResponse {{
-    Json(json!({{ "message": "{} index" }}))
-}}
-
-pub async fn show() -> impl IntoResponse {{
-    Json(json!({{ "message": "{} show" }}))
-}}
-
-pub async fn store() -> impl IntoResponse {{
-    Json(json!({{ "message": "{} store" }}))
-}}
-
-pub async fn update() -> impl IntoResponse {{
-    Json(json!({{ "message": "{} update" }}))
-}}
-
-pub async fn destroy() -> impl IntoResponse {{
-    Json(json!({{ "message": "{} destroy" }}))
-}}
-"#,
-        name, name, name, name, name
-    );
-
-    fs::write(&path, content)
+    fs::write(&path, controller_content(name))
         .with_context(|| format!("Failed to create controller: {}", path.display()))?;
 
     inject_mod_decl("src/app/Http/Controllers/mod.rs", name)?;
@@ -73,22 +133,7 @@ pub fn request(name: &str) -> Result<()> {
         anyhow::bail!("Request already exists: {}", path.display());
     }
 
-    let content = format!(
-        r#"use serde::Deserialize;
-use validator::Validate;
-
-#[derive(Debug, Deserialize, Validate)]
-pub struct {} {{
-    // Add your fields here
-    // Example:
-    // #[validate(length(min = 1, max = 255))]
-    // pub name: String,
-}}
-"#,
-        name
-    );
-
-    fs::write(&path, content)
+    fs::write(&path, request_content(name))
         .with_context(|| format!("Failed to create request: {}", path.display()))?;
 
     inject_mod_decl("src/app/Http/Requests/mod.rs", name)?;
@@ -104,23 +149,7 @@ pub fn model(name: &str) -> Result<()> {
         anyhow::bail!("Model already exists: {}", path.display());
     }
 
-    let content = format!(
-        r#"use serde::{{Deserialize, Serialize}};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct {} {{
-    pub id: i64,
-    // Add your fields here
-}}
-
-impl {} {{
-    // Add your model methods here
-}}
-"#,
-        name, name
-    );
-
-    fs::write(&path, content)
+    fs::write(&path, model_content(name))
         .with_context(|| format!("Failed to create model: {}", path.display()))?;
 
     inject_mod_decl("src/app/Models/mod.rs", name)?;
@@ -150,12 +179,7 @@ pub fn view_file(name: &str) -> Result<()> {
         anyhow::bail!("View already exists: {}", file_path.display());
     }
 
-    let content = format!(
-        "{{% extends \"layouts.app\" %}}\n\n{{% block title %}}{name}{{% endblock %}}\n\n{{% block content %}}\n<h1>{name}</h1>\n{{% endblock %}}\n",
-        name = name
-    );
-
-    fs::write(&file_path, content)
+    fs::write(&file_path, view_template_content(name))
         .with_context(|| format!("Failed to create view: {}", file_path.display()))?;
 
     println!("✓ View created: {}", file_path.display());
@@ -183,21 +207,17 @@ pub fn middleware(name: &str) -> Result<()> {
 pub fn migration(name: &str) -> Result<()> {
     let now = chrono::Utc::now();
     let timestamp = now.format("%Y%m%d%H%M%S");
-    let created = now.format("%Y-%m-%d %H:%M:%S");
+    let created = now.format("%Y-%m-%d %H:%M:%S").to_string();
     let base = Path::new("database/migrations");
 
     let up_path   = base.join(format!("{}_{}.up.sql", timestamp, name));
     let down_path = base.join(format!("{}_{}.down.sql", timestamp, name));
 
-    fs::write(&up_path, format!(
-        "-- Migration: {name}\n-- Created:   {created}\n\n-- Write your UP migration SQL here.\n",
-        name = name, created = created,
-    )).with_context(|| format!("Failed to write {}", up_path.display()))?;
+    fs::write(&up_path, migration_up_content(name, &created))
+        .with_context(|| format!("Failed to write {}", up_path.display()))?;
 
-    fs::write(&down_path, format!(
-        "-- Migration: {name} (rollback)\n-- Created:   {created}\n\n-- Write your DOWN migration SQL here.\n",
-        name = name, created = created,
-    )).with_context(|| format!("Failed to write {}", down_path.display()))?;
+    fs::write(&down_path, migration_down_content(name, &created))
+        .with_context(|| format!("Failed to write {}", down_path.display()))?;
 
     println!("✓ Created: {}", up_path.display());
     println!("✓ Created: {}", down_path.display());
@@ -457,7 +477,7 @@ mod tests {
         "use crate::app::Http::Controllers::Auth::{ApiLoginController, ApiRegisterController};"
     }
     fn api_routes() -> &'static str {
-        "\n        .route(\"/api/auth/login\",    post(ApiLoginController::store))\n        .route(\"/api/auth/refresh\",  post(ApiLoginController::refresh))\n        .route(\"/api/auth/logout\",   post(ApiLoginController::destroy))\n        .route(\"/api/auth/register\", post(ApiRegisterController::store))"
+        "\n        .route(\"/api/auth/login\",    post(ApiLoginController::store))\n        .route(\"/api/auth/refresh\",  post(ApiLoginController::refresh))\n        .route(\"/api/auth/logout\",   post(ApiLoginController::destroy))\n        .route(\"/api/auth/register\", post(ApiRegisterController::store))\n        .route(\"/api/me\",            get(ApiLoginController::me))"
     }
     fn web_use() -> &'static str {
         "use crate::app::Http::Controllers::Auth::{LoginController, RegisterController};\nuse crate::app::Http::Controllers::DashboardController;"
@@ -1321,10 +1341,888 @@ mod tests {
         fs::write(&f, api_content()).unwrap();
         inject_api(&f); inject_api(&f);
         let c = fs::read_to_string(&f).unwrap();
-        for route in &["/api/auth/login", "/api/auth/refresh", "/api/auth/logout", "/api/auth/register"] {
+        for route in &["/api/auth/login", "/api/auth/refresh", "/api/auth/logout", "/api/auth/register", "/api/me"] {
             assert_eq!(c.matches(route).count(), 1, "{} must appear exactly once", route);
         }
         assert_eq!(c.matches(api_use()).count(), 1, "use_decl must appear exactly once");
         assert_eq!(c.matches("routing::{get, post}").count(), 1, "routing import must appear exactly once");
+    }
+
+    // ── controller_content — 10 tests ─────────────────────────────────────────
+
+    #[test]
+    fn ctrl_01_all_five_messages_contain_name() {
+        // Regression: name must be substituted in every action, not just index
+        let out = controller_content("MyController");
+        for action in &["index", "show", "store", "update", "destroy"] {
+            assert!(out.contains(&format!("\"MyController {}\"", action)),
+                "name missing from {} message", action);
+        }
+    }
+
+    #[test]
+    fn ctrl_02_message_format_is_name_space_action() {
+        // Regression: format must be "{name} {action}", not "{action} {name}" or just "{action}"
+        let out = controller_content("Ctrl");
+        for action in &["index", "show", "store", "update", "destroy"] {
+            assert!(out.contains(&format!("\"Ctrl {}\"", action)),
+                "wrong format for {}", action);
+            assert!(!out.contains(&format!("\"{}  Ctrl\"", action)),
+                "reversed format found for {}", action);
+        }
+    }
+
+    #[test]
+    fn ctrl_03_json_key_is_message_not_data_or_result() {
+        // Regression: the JSON response must use "message" as key
+        let out = controller_content("Foo");
+        assert!(out.contains("\"message\":") || out.contains("\"message\" :"),
+            "key must be \"message\"");
+        assert!(!out.contains("\"data\":") && !out.contains("\"result\":"));
+    }
+
+    #[test]
+    fn ctrl_04_single_char_name_substituted_correctly() {
+        let out = controller_content("X");
+        for action in &["index", "show", "store", "update", "destroy"] {
+            assert!(out.contains(&format!("\"X {}\"", action)), "single-char name missing from {}", action);
+        }
+    }
+
+    #[test]
+    fn ctrl_05_all_five_messages_are_distinct() {
+        // Regression: if name substitution is broken all messages might be identical
+        let out = controller_content("Foo");
+        let messages: Vec<_> = ["index", "show", "store", "update", "destroy"]
+            .iter()
+            .map(|a| format!("\"Foo {}\"", a))
+            .collect();
+        for (i, m1) in messages.iter().enumerate() {
+            for (j, m2) in messages.iter().enumerate() {
+                if i != j {
+                    assert_ne!(m1, m2, "messages {} and {} must be different", i, j);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ctrl_06_json_message_contains_name_in_index() {
+        assert!(controller_content("PostController").contains("\"PostController index\""));
+    }
+
+    #[test]
+    fn ctrl_07_json_message_contains_name_in_destroy() {
+        assert!(controller_content("PostController").contains("\"PostController destroy\""));
+    }
+
+    #[test]
+    fn ctrl_08_imports_axum_json_and_into_response() {
+        let out = controller_content("Foo");
+        assert!(out.contains("use axum::{Json, response::IntoResponse};"));
+    }
+
+    #[test]
+    fn ctrl_09_returns_impl_into_response() {
+        assert!(controller_content("Foo").contains("-> impl IntoResponse"));
+    }
+
+    #[test]
+    fn ctrl_10_different_names_produce_different_content() {
+        assert_ne!(controller_content("FooController"), controller_content("BarController"));
+    }
+
+    // ── request_content — 10 tests ────────────────────────────────────────────
+
+    #[test]
+    fn req_01_has_pub_struct_with_name() {
+        assert!(request_content("LoginRequest").contains("pub struct LoginRequest"));
+    }
+
+    #[test]
+    fn req_02_derives_deserialize() {
+        assert!(request_content("LoginRequest").contains("Deserialize"));
+    }
+
+    #[test]
+    fn req_03_derives_validate() {
+        assert!(request_content("LoginRequest").contains("Validate"));
+    }
+
+    #[test]
+    fn req_04_derives_debug() {
+        assert!(request_content("LoginRequest").contains("Debug"));
+    }
+
+    #[test]
+    fn req_05_imports_serde_deserialize() {
+        assert!(request_content("LoginRequest").contains("use serde::Deserialize;"));
+    }
+
+    #[test]
+    fn req_06_imports_validator_validate() {
+        assert!(request_content("LoginRequest").contains("use validator::Validate;"));
+    }
+
+    #[test]
+    fn req_07_no_serialize_derive() {
+        // Requests only need deserialization (incoming data), not serialization
+        assert!(!request_content("LoginRequest").contains("Serialize"));
+    }
+
+    #[test]
+    fn req_08_derive_attr_correct_order() {
+        assert!(request_content("StoreUserRequest").contains("#[derive(Debug, Deserialize, Validate)]"));
+    }
+
+    #[test]
+    fn req_09_struct_name_matches_input() {
+        assert!(request_content("UpdatePasswordRequest").contains("pub struct UpdatePasswordRequest"));
+    }
+
+    #[test]
+    fn req_10_different_names_different_structs() {
+        assert_ne!(request_content("LoginRequest"), request_content("RegisterRequest"));
+    }
+
+    // ── model_content — 10 tests ──────────────────────────────────────────────
+
+    #[test]
+    fn mdl_01_has_pub_struct_with_name() {
+        assert!(model_content("Post").contains("pub struct Post"));
+    }
+
+    #[test]
+    fn mdl_02_derives_serialize() {
+        assert!(model_content("Post").contains("Serialize"));
+    }
+
+    #[test]
+    fn mdl_03_derives_deserialize() {
+        assert!(model_content("Post").contains("Deserialize"));
+    }
+
+    #[test]
+    fn mdl_04_derives_clone() {
+        assert!(model_content("Post").contains("Clone"));
+    }
+
+    #[test]
+    fn mdl_05_derives_debug() {
+        assert!(model_content("Post").contains("Debug"));
+    }
+
+    #[test]
+    fn mdl_06_has_pub_id_i64() {
+        assert!(model_content("Post").contains("pub id: i64,"));
+    }
+
+    #[test]
+    fn mdl_07_has_impl_block() {
+        assert!(model_content("Comment").contains("impl Comment"));
+    }
+
+    #[test]
+    fn mdl_08_imports_serde_serialize_deserialize() {
+        assert!(model_content("Post").contains("use serde::{Deserialize, Serialize};"));
+    }
+
+    #[test]
+    fn mdl_09_impl_block_name_matches_struct_name() {
+        let out = model_content("Article");
+        assert!(out.contains("pub struct Article") && out.contains("impl Article"));
+    }
+
+    #[test]
+    fn mdl_10_different_names_different_content() {
+        assert_ne!(model_content("User"), model_content("Post"));
+    }
+
+    // ── view_template_content — 10 tests ──────────────────────────────────────
+
+    #[test]
+    fn view_tpl_01_extends_layouts_app() {
+        assert!(view_template_content("welcome").contains("{% extends \"layouts.app\" %}"));
+    }
+
+    #[test]
+    fn view_tpl_02_has_block_title() {
+        assert!(view_template_content("welcome").contains("{% block title %}"));
+    }
+
+    #[test]
+    fn view_tpl_03_has_block_content() {
+        assert!(view_template_content("welcome").contains("{% block content %}"));
+    }
+
+    #[test]
+    fn view_tpl_04_has_endblock() {
+        assert!(view_template_content("welcome").contains("{% endblock %}"));
+    }
+
+    #[test]
+    fn view_tpl_05_name_appears_in_title_block() {
+        let out = view_template_content("users.index");
+        let title_pos = out.find("{% block title %}").unwrap();
+        let endblock_pos = out[title_pos..].find("{% endblock %}").unwrap() + title_pos;
+        assert!(out[title_pos..endblock_pos].contains("users.index"));
+    }
+
+    #[test]
+    fn view_tpl_06_name_appears_in_h1() {
+        assert!(view_template_content("dashboard").contains("<h1>dashboard</h1>"));
+    }
+
+    #[test]
+    fn view_tpl_07_dot_notation_name_preserved_as_is() {
+        // The view content uses the name as passed, not decomposed
+        assert!(view_template_content("admin.users.show").contains("admin.users.show"));
+    }
+
+    #[test]
+    fn view_tpl_08_single_segment_name_in_content() {
+        assert!(view_template_content("welcome").contains("<h1>welcome</h1>"));
+    }
+
+    #[test]
+    fn view_tpl_09_different_names_different_content() {
+        assert_ne!(view_template_content("login"), view_template_content("register"));
+    }
+
+    #[test]
+    fn view_tpl_10_no_japanese_text() {
+        let out = view_template_content("welcome");
+        assert!(!out.chars().any(|c| ('\u{3040}'..='\u{9FFF}').contains(&c)));
+    }
+
+    // ── migration content — 10 tests ──────────────────────────────────────────
+
+    #[test]
+    fn mig_01_up_contains_migration_comment_with_name() {
+        let up = migration_up_content("create_posts_table", "2026-01-01 00:00:00");
+        assert!(up.contains("-- Migration: create_posts_table"));
+    }
+
+    #[test]
+    fn mig_02_up_contains_up_sql_instruction() {
+        let up = migration_up_content("create_posts_table", "2026-01-01 00:00:00");
+        assert!(up.contains("-- Write your UP migration SQL here."));
+    }
+
+    #[test]
+    fn mig_03_down_contains_rollback_in_comment() {
+        let down = migration_down_content("create_posts_table", "2026-01-01 00:00:00");
+        assert!(down.contains("-- Migration: create_posts_table (rollback)"));
+    }
+
+    #[test]
+    fn mig_04_down_contains_down_sql_instruction() {
+        let down = migration_down_content("create_posts_table", "2026-01-01 00:00:00");
+        assert!(down.contains("-- Write your DOWN migration SQL here."));
+    }
+
+    #[test]
+    fn mig_05_both_contain_created_timestamp() {
+        let ts = "2026-05-17 12:34:56";
+        let up = migration_up_content("add_index", ts);
+        let dn = migration_down_content("add_index", ts);
+        assert!(up.contains("-- Created:   2026-05-17 12:34:56"));
+        assert!(dn.contains("-- Created:   2026-05-17 12:34:56"));
+    }
+
+    #[test]
+    fn mig_06_up_and_down_are_different() {
+        let ts = "2026-01-01 00:00:00";
+        assert_ne!(migration_up_content("foo", ts), migration_down_content("foo", ts));
+    }
+
+    #[test]
+    fn mig_07_name_preserved_verbatim_in_up() {
+        let up = migration_up_content("create_user_sessions", "2026-01-01 00:00:00");
+        assert!(up.contains("create_user_sessions"));
+        assert!(!up.contains("create_user_sessions (rollback)"));
+    }
+
+    #[test]
+    fn mig_08_name_preserved_verbatim_in_down() {
+        let down = migration_down_content("drop_old_columns", "2026-01-01 00:00:00");
+        assert!(down.contains("drop_old_columns"));
+    }
+
+    #[test]
+    fn mig_09_different_names_produce_different_content() {
+        let ts = "2026-01-01 00:00:00";
+        assert_ne!(migration_up_content("create_posts", ts), migration_up_content("create_comments", ts));
+    }
+
+    #[test]
+    fn mig_10_content_starts_with_sql_comment() {
+        let ts = "2026-01-01 00:00:00";
+        assert!(migration_up_content("foo", ts).starts_with("--"));
+        assert!(migration_down_content("foo", ts).starts_with("--"));
+    }
+
+    // ── combination tests (50) ────────────────────────────────────────────────
+
+    // --- Group 1: Multiple controllers in Controllers/mod.rs (5) ---
+
+    #[test]
+    fn cmb2_01_two_controllers_both_in_mod() {
+        let d = tmp(); let f = d.path().join("mod.rs");
+        fs::write(&f, "").unwrap();
+        inject_mod_decl(f.to_str().unwrap(), "UserController").unwrap();
+        inject_mod_decl(f.to_str().unwrap(), "PostController").unwrap();
+        let c = fs::read_to_string(&f).unwrap();
+        assert!(c.contains("pub mod UserController;") && c.contains("pub mod PostController;"));
+    }
+
+    #[test]
+    fn cmb2_02_three_controllers_all_in_mod() {
+        let d = tmp(); let f = d.path().join("mod.rs");
+        fs::write(&f, "").unwrap();
+        for ctrl in &["HomeController", "UserController", "StatusController"] {
+            inject_mod_decl(f.to_str().unwrap(), ctrl).unwrap();
+        }
+        let c = fs::read_to_string(&f).unwrap();
+        for ctrl in &["HomeController", "UserController", "StatusController"] {
+            assert!(c.contains(&format!("pub mod {};", ctrl)), "missing {}", ctrl);
+        }
+    }
+
+    #[test]
+    fn cmb2_03_five_controllers_all_in_mod() {
+        let d = tmp(); let f = d.path().join("mod.rs");
+        fs::write(&f, "").unwrap();
+        for ctrl in &["A", "B", "C", "D", "E"] {
+            inject_mod_decl(f.to_str().unwrap(), ctrl).unwrap();
+        }
+        let c = fs::read_to_string(&f).unwrap();
+        for ctrl in &["A", "B", "C", "D", "E"] {
+            assert_eq!(c.matches(&format!("pub mod {};", ctrl)).count(), 1, "{} must appear once", ctrl);
+        }
+    }
+
+    #[test]
+    fn cmb2_04_controller_then_auth_inject_both_in_mod() {
+        let d = tmp(); let f = d.path().join("mod.rs");
+        fs::write(&f, "pub mod HomeController;\n").unwrap();
+        inject_mod_decl(f.to_str().unwrap(), "UserController").unwrap();
+        inject_mod_decl(f.to_str().unwrap(), "Auth").unwrap();
+        let c = fs::read_to_string(&f).unwrap();
+        assert!(c.contains("pub mod HomeController;"));
+        assert!(c.contains("pub mod UserController;"));
+        assert!(c.contains("pub mod Auth;"));
+    }
+
+    #[test]
+    fn cmb2_05_controller_then_dashboard_all_three_once() {
+        let d = tmp(); let f = d.path().join("mod.rs");
+        fs::write(&f, "pub mod UserController;\n").unwrap();
+        inject_mod_decl(f.to_str().unwrap(), "Auth").unwrap();
+        inject_mod_decl(f.to_str().unwrap(), "DashboardController").unwrap();
+        let c = fs::read_to_string(&f).unwrap();
+        for m in &["UserController", "Auth", "DashboardController"] {
+            assert_eq!(c.matches(&format!("pub mod {};", m)).count(), 1, "{} must appear once", m);
+        }
+    }
+
+    // --- Group 2: Multiple requests in Requests/mod.rs (5) ---
+
+    #[test]
+    fn cmb2_06_two_requests_both_in_mod() {
+        let d = tmp(); let f = d.path().join("mod.rs");
+        fs::write(&f, "").unwrap();
+        inject_mod_decl(f.to_str().unwrap(), "login_request").unwrap();
+        inject_mod_decl(f.to_str().unwrap(), "register_request").unwrap();
+        let c = fs::read_to_string(&f).unwrap();
+        assert!(c.contains("pub mod login_request;") && c.contains("pub mod register_request;"));
+    }
+
+    #[test]
+    fn cmb2_07_store_user_request_plus_auth_requests_all_three() {
+        let d = tmp(); let f = d.path().join("mod.rs");
+        fs::write(&f, "pub mod StoreUserRequest;\n").unwrap();
+        inject_mod_decl(f.to_str().unwrap(), "login_request").unwrap();
+        inject_mod_decl(f.to_str().unwrap(), "register_request").unwrap();
+        let c = fs::read_to_string(&f).unwrap();
+        for m in &["StoreUserRequest", "login_request", "register_request"] {
+            assert_eq!(c.matches(&format!("pub mod {};", m)).count(), 1, "{} must appear once", m);
+        }
+    }
+
+    #[test]
+    fn cmb2_08_five_requests_all_in_mod() {
+        let d = tmp(); let f = d.path().join("mod.rs");
+        fs::write(&f, "").unwrap();
+        for req in &["r1", "r2", "r3", "r4", "r5"] {
+            inject_mod_decl(f.to_str().unwrap(), req).unwrap();
+        }
+        let c = fs::read_to_string(&f).unwrap();
+        for req in &["r1", "r2", "r3", "r4", "r5"] {
+            assert_eq!(c.matches(&format!("pub mod {};", req)).count(), 1);
+        }
+    }
+
+    #[test]
+    fn cmb2_09_requests_mod_unaffected_by_controllers_inject() {
+        let d = tmp();
+        let ctrl_mod = d.path().join("controllers_mod.rs");
+        let req_mod  = d.path().join("requests_mod.rs");
+        fs::write(&ctrl_mod, "").unwrap();
+        fs::write(&req_mod, "pub mod StoreUserRequest;\n").unwrap();
+        inject_mod_decl(ctrl_mod.to_str().unwrap(), "UserController").unwrap();
+        // requests mod.rs must be unchanged
+        assert_eq!(fs::read_to_string(&req_mod).unwrap(), "pub mod StoreUserRequest;\n");
+    }
+
+    #[test]
+    fn cmb2_10_controllers_mod_unaffected_by_requests_inject() {
+        let d = tmp();
+        let ctrl_mod = d.path().join("controllers_mod.rs");
+        let req_mod  = d.path().join("requests_mod.rs");
+        fs::write(&ctrl_mod, "pub mod UserController;\n").unwrap();
+        fs::write(&req_mod, "").unwrap();
+        inject_mod_decl(req_mod.to_str().unwrap(), "login_request").unwrap();
+        assert_eq!(fs::read_to_string(&ctrl_mod).unwrap(), "pub mod UserController;\n");
+    }
+
+    // --- Group 3: Models and middleware in their own mod.rs (5) ---
+
+    #[test]
+    fn cmb2_11_two_models_both_in_mod() {
+        let d = tmp(); let f = d.path().join("mod.rs");
+        fs::write(&f, "").unwrap();
+        inject_mod_decl(f.to_str().unwrap(), "User").unwrap();
+        inject_mod_decl(f.to_str().unwrap(), "Post").unwrap();
+        let c = fs::read_to_string(&f).unwrap();
+        assert!(c.contains("pub mod User;") && c.contains("pub mod Post;"));
+    }
+
+    #[test]
+    fn cmb2_12_user_post_comment_all_in_models_mod() {
+        let d = tmp(); let f = d.path().join("mod.rs");
+        fs::write(&f, "").unwrap();
+        for m in &["User", "Post", "Comment"] {
+            inject_mod_decl(f.to_str().unwrap(), m).unwrap();
+        }
+        let c = fs::read_to_string(&f).unwrap();
+        for m in &["User", "Post", "Comment"] {
+            assert_eq!(c.matches(&format!("pub mod {};", m)).count(), 1);
+        }
+    }
+
+    #[test]
+    fn cmb2_13_three_middlewares_all_in_mod() {
+        let d = tmp(); let f = d.path().join("mod.rs");
+        fs::write(&f, "").unwrap();
+        for mw in &["LogRequest", "Authenticate", "RateLimit"] {
+            inject_mod_decl(f.to_str().unwrap(), mw).unwrap();
+        }
+        let c = fs::read_to_string(&f).unwrap();
+        for mw in &["LogRequest", "Authenticate", "RateLimit"] {
+            assert_eq!(c.matches(&format!("pub mod {};", mw)).count(), 1);
+        }
+    }
+
+    #[test]
+    fn cmb2_14_models_mod_independent_from_controllers_mod() {
+        let d = tmp();
+        let ctrl_mod  = d.path().join("ctrl_mod.rs");
+        let model_mod = d.path().join("model_mod.rs");
+        fs::write(&ctrl_mod, "").unwrap();
+        fs::write(&model_mod, "").unwrap();
+        inject_mod_decl(ctrl_mod.to_str().unwrap(), "UserController").unwrap();
+        inject_mod_decl(model_mod.to_str().unwrap(), "User").unwrap();
+        assert!(fs::read_to_string(&ctrl_mod).unwrap().contains("pub mod UserController;"));
+        assert!(fs::read_to_string(&model_mod).unwrap().contains("pub mod User;"));
+        assert!(!fs::read_to_string(&ctrl_mod).unwrap().contains("pub mod User;"));
+        assert!(!fs::read_to_string(&model_mod).unwrap().contains("pub mod UserController;"));
+    }
+
+    #[test]
+    fn cmb2_15_ten_module_names_all_in_mod() {
+        let d = tmp(); let f = d.path().join("mod.rs");
+        fs::write(&f, "").unwrap();
+        let names = ["m1","m2","m3","m4","m5","m6","m7","m8","m9","m10"];
+        for n in &names { inject_mod_decl(f.to_str().unwrap(), n).unwrap(); }
+        let c = fs::read_to_string(&f).unwrap();
+        for n in &names { assert_eq!(c.matches(&format!("pub mod {};", n)).count(), 1, "{} missing", n); }
+    }
+
+    // --- Group 4: make:auth API + non-auth commands (5) ---
+
+    #[test]
+    fn cmb2_16_api_inject_and_controller_mod_independent() {
+        let d = tmp();
+        let api_f = d.path().join("api.rs");
+        let mod_f = d.path().join("mod.rs");
+        fs::write(&api_f, api_content()).unwrap();
+        fs::write(&mod_f, "pub mod UserController;\n").unwrap();
+        inject_api(&api_f);
+        inject_mod_decl(mod_f.to_str().unwrap(), "Auth").unwrap();
+        assert!(fs::read_to_string(&api_f).unwrap().contains("/api/auth/login"));
+        let mc = fs::read_to_string(&mod_f).unwrap();
+        assert!(mc.contains("pub mod UserController;") && mc.contains("pub mod Auth;"));
+    }
+
+    #[test]
+    fn cmb2_17_web_inject_and_requests_mod_independent() {
+        let d = tmp();
+        let web_f = d.path().join("web.rs");
+        let req_f = d.path().join("mod.rs");
+        fs::write(&web_f, web_content()).unwrap();
+        fs::write(&req_f, "pub mod StoreUserRequest;\n").unwrap();
+        inject_web(&web_f);
+        inject_mod_decl(req_f.to_str().unwrap(), "login_request").unwrap();
+        inject_mod_decl(req_f.to_str().unwrap(), "register_request").unwrap();
+        assert!(fs::read_to_string(&web_f).unwrap().contains("\"/login\""));
+        let rc = fs::read_to_string(&req_f).unwrap();
+        for m in &["StoreUserRequest", "login_request", "register_request"] {
+            assert_eq!(rc.matches(&format!("pub mod {};", m)).count(), 1);
+        }
+    }
+
+    #[test]
+    fn cmb2_18_api_inject_five_times_all_routes_once() {
+        let d = tmp(); let f = d.path().join("api.rs");
+        fs::write(&f, api_content()).unwrap();
+        for _ in 0..5 { inject_api(&f); }
+        let c = fs::read_to_string(&f).unwrap();
+        for r in &["/api/auth/login", "/api/auth/refresh", "/api/auth/logout", "/api/auth/register", "/api/me"] {
+            assert_eq!(c.matches(r).count(), 1, "{} must appear once", r);
+        }
+    }
+
+    #[test]
+    fn cmb2_19_web_inject_five_times_all_routes_once() {
+        let d = tmp(); let f = d.path().join("web.rs");
+        fs::write(&f, web_content()).unwrap();
+        for _ in 0..5 { inject_web(&f); }
+        let c = fs::read_to_string(&f).unwrap();
+        for r in &["\"/login\"", "\"/logout\"", "\"/register\"", "\"/dashboard\""] {
+            assert_eq!(c.matches(r).count(), 1, "{} must appear once", r);
+        }
+    }
+
+    #[test]
+    fn cmb2_20_api_and_web_inject_both_files_independent() {
+        let d = tmp();
+        let api_f = d.path().join("api.rs");
+        let web_f = d.path().join("web.rs");
+        fs::write(&api_f, api_content()).unwrap();
+        fs::write(&web_f, web_content()).unwrap();
+        inject_api(&api_f);
+        inject_web(&web_f);
+        assert!(fs::read_to_string(&api_f).unwrap().contains("/api/auth/login"));
+        assert!(!fs::read_to_string(&api_f).unwrap().contains("\"/login\""));
+        assert!(fs::read_to_string(&web_f).unwrap().contains("\"/login\""));
+        assert!(!fs::read_to_string(&web_f).unwrap().contains("/api/auth/login"));
+    }
+
+    // --- Group 5: /api/me route (5) ---
+
+    #[test]
+    fn cmb2_21_api_me_route_injected() {
+        let d = tmp(); let f = d.path().join("api.rs");
+        fs::write(&f, api_content()).unwrap();
+        inject_api(&f);
+        assert!(fs::read_to_string(&f).unwrap().contains("/api/me"));
+    }
+
+    #[test]
+    fn cmb2_22_api_me_uses_get() {
+        let d = tmp(); let f = d.path().join("api.rs");
+        fs::write(&f, api_content()).unwrap();
+        inject_api(&f);
+        assert!(fs::read_to_string(&f).unwrap().contains("get(ApiLoginController::me)"));
+    }
+
+    #[test]
+    fn cmb2_23_api_me_idempotent_after_two_calls() {
+        let d = tmp(); let f = d.path().join("api.rs");
+        fs::write(&f, api_content()).unwrap();
+        inject_api(&f); inject_api(&f);
+        assert_eq!(fs::read_to_string(&f).unwrap().matches("/api/me").count(), 1);
+    }
+
+    #[test]
+    fn cmb2_24_api_me_after_five_calls_exactly_once() {
+        let d = tmp(); let f = d.path().join("api.rs");
+        fs::write(&f, api_content()).unwrap();
+        for _ in 0..5 { inject_api(&f); }
+        assert_eq!(fs::read_to_string(&f).unwrap().matches("/api/me").count(), 1);
+    }
+
+    #[test]
+    fn cmb2_25_api_me_not_in_web_rs() {
+        let d = tmp(); let f = d.path().join("web.rs");
+        fs::write(&f, web_content()).unwrap();
+        inject_web(&f);
+        assert!(!fs::read_to_string(&f).unwrap().contains("/api/me"));
+    }
+
+    // --- Group 6: controller_content correctness (5) ---
+
+    #[test]
+    fn cmb2_26_controller_five_functions_all_use_name() {
+        let out = controller_content("ArticleController");
+        for action in &["index", "show", "store", "update", "destroy"] {
+            assert!(out.contains(&format!("\"ArticleController {}\"", action)),
+                "missing message for {}", action);
+        }
+    }
+
+    #[test]
+    fn cmb2_27_controller_no_path_attribute() {
+        assert!(!controller_content("FooController").contains("#[path"));
+    }
+
+    #[test]
+    fn cmb2_28_controller_no_japanese_text() {
+        let out = controller_content("FooController");
+        assert!(!out.chars().any(|c| ('\u{3040}'..='\u{9FFF}').contains(&c)));
+    }
+
+    #[test]
+    fn cmb2_29_controller_uses_serde_json_json_macro() {
+        assert!(controller_content("Foo").contains("use serde_json::json;"));
+    }
+
+    #[test]
+    fn cmb2_30_controller_each_action_word_appears_in_its_json_message() {
+        // Regression: "index" message must say "index", "show" must say "show", etc.
+        let out = controller_content("Ctrl");
+        for action in &["index", "show", "store", "update", "destroy"] {
+            assert!(out.contains(&format!("Ctrl {}", action)),
+                "action word '{}' missing from its JSON message", action);
+        }
+    }
+
+    // --- Group 7: request_content + model_content correctness (5) ---
+
+    #[test]
+    fn cmb2_31_request_no_path_attribute() {
+        assert!(!request_content("LoginRequest").contains("#[path"));
+    }
+
+    #[test]
+    fn cmb2_32_request_no_japanese_text() {
+        let out = request_content("FooRequest");
+        assert!(!out.chars().any(|c| ('\u{3040}'..='\u{9FFF}').contains(&c)));
+    }
+
+    #[test]
+    fn cmb2_33_model_no_path_attribute() {
+        assert!(!model_content("Post").contains("#[path"));
+    }
+
+    #[test]
+    fn cmb2_34_model_no_japanese_text() {
+        let out = model_content("Article");
+        assert!(!out.chars().any(|c| ('\u{3040}'..='\u{9FFF}').contains(&c)));
+    }
+
+    #[test]
+    fn cmb2_35_model_id_is_i64_not_i32() {
+        // make:model generates id: i64; the auth User model uses i32 (different template)
+        assert!(model_content("Post").contains("pub id: i64,"));
+        assert!(!model_content("Post").contains("pub id: i32,"));
+    }
+
+    // --- Group 8: view_template_content correctness (5) ---
+
+    #[test]
+    fn cmb2_36_view_four_segment_path_name_preserved() {
+        assert!(view_template_content("a.b.c.d").contains("a.b.c.d"));
+    }
+
+    #[test]
+    fn cmb2_37_view_no_path_attribute() {
+        assert!(!view_template_content("welcome").contains("#[path"));
+    }
+
+    #[test]
+    fn cmb2_38_view_name_in_both_title_and_h1() {
+        let out = view_template_content("about");
+        assert!(out.contains("{% block title %}about{% endblock %}"));
+        assert!(out.contains("<h1>about</h1>"));
+    }
+
+    #[test]
+    fn cmb2_39_view_layout_extends_exact_string() {
+        // Must be "layouts.app" not "layout.app" or "layouts/app"
+        assert!(view_template_content("welcome").contains("{% extends \"layouts.app\" %}"));
+        assert!(!view_template_content("welcome").contains("layouts/app"));
+    }
+
+    #[test]
+    fn cmb2_40_view_template_ends_with_newline() {
+        assert!(view_template_content("welcome").ends_with('\n'));
+    }
+
+    // --- Group 9: migration correctness (5) ---
+
+    #[test]
+    fn cmb2_41_migration_up_has_no_rollback_word() {
+        let up = migration_up_content("foo", "2026-01-01 00:00:00");
+        assert!(!up.contains("rollback"));
+    }
+
+    #[test]
+    fn cmb2_42_migration_down_has_rollback_word() {
+        let down = migration_down_content("foo", "2026-01-01 00:00:00");
+        assert!(down.contains("rollback"));
+    }
+
+    #[test]
+    fn cmb2_43_migration_no_japanese_text() {
+        let ts = "2026-01-01 00:00:00";
+        let out = migration_up_content("foo", ts) + &migration_down_content("foo", ts);
+        assert!(!out.chars().any(|c| ('\u{3040}'..='\u{9FFF}').contains(&c)));
+    }
+
+    #[test]
+    fn cmb2_44_migration_created_ts_preserved_verbatim() {
+        let ts = "2026-05-17 09:30:00";
+        assert!(migration_up_content("m", ts).contains(ts));
+        assert!(migration_down_content("m", ts).contains(ts));
+    }
+
+    #[test]
+    fn cmb2_45_migration_up_for_two_names_are_different() {
+        let ts = "2026-01-01 00:00:00";
+        assert_ne!(migration_up_content("create_posts", ts), migration_up_content("create_users", ts));
+    }
+
+    // --- Group 10: realistic multi-command scenario (5) ---
+
+    #[test]
+    fn cmb2_46_realistic_make_controller_and_make_auth_web() {
+        let d = tmp();
+        let ctrl_mod = d.path().join("mod.rs");
+        let web_f    = d.path().join("web.rs");
+        fs::write(&ctrl_mod, "pub mod HomeController;\npub mod UserController;\n").unwrap();
+        fs::write(&web_f, web_content()).unwrap();
+        // simulate make:controller PostController
+        inject_mod_decl(ctrl_mod.to_str().unwrap(), "PostController").unwrap();
+        // simulate make:auth (web): injects Auth + DashboardController + web routes
+        inject_mod_decl(ctrl_mod.to_str().unwrap(), "Auth").unwrap();
+        inject_mod_decl(ctrl_mod.to_str().unwrap(), "DashboardController").unwrap();
+        inject_web(&web_f);
+        let mc = fs::read_to_string(&ctrl_mod).unwrap();
+        for m in &["HomeController", "UserController", "PostController", "Auth", "DashboardController"] {
+            assert_eq!(mc.matches(&format!("pub mod {};", m)).count(), 1, "{} must appear once", m);
+        }
+        let wc = fs::read_to_string(&web_f).unwrap();
+        for r in &["\"/login\"", "\"/logout\"", "\"/register\"", "\"/dashboard\""] {
+            assert!(wc.contains(r), "missing route {}", r);
+        }
+    }
+
+    #[test]
+    fn cmb2_47_realistic_make_request_and_make_auth() {
+        let d = tmp(); let f = d.path().join("mod.rs");
+        fs::write(&f, "pub mod StoreUserRequest;\n").unwrap();
+        // simulate make:auth injecting login_request and register_request
+        inject_mod_decl(f.to_str().unwrap(), "login_request").unwrap();
+        inject_mod_decl(f.to_str().unwrap(), "register_request").unwrap();
+        let c = fs::read_to_string(&f).unwrap();
+        for m in &["StoreUserRequest", "login_request", "register_request"] {
+            assert_eq!(c.matches(&format!("pub mod {};", m)).count(), 1, "{} must appear once", m);
+        }
+    }
+
+    #[test]
+    fn cmb2_48_make_auth_web_then_make_controller_mod_order_invariant() {
+        // Test that running make:auth before or after make:controller gives same mod.rs state
+        let d = tmp();
+        // Order A: auth first, then controller
+        let f_a = d.path().join("mod_a.rs");
+        fs::write(&f_a, "pub mod HomeController;\n").unwrap();
+        inject_mod_decl(f_a.to_str().unwrap(), "Auth").unwrap();
+        inject_mod_decl(f_a.to_str().unwrap(), "DashboardController").unwrap();
+        inject_mod_decl(f_a.to_str().unwrap(), "PostController").unwrap();
+        // Order B: controller first, then auth
+        let f_b = d.path().join("mod_b.rs");
+        fs::write(&f_b, "pub mod HomeController;\n").unwrap();
+        inject_mod_decl(f_b.to_str().unwrap(), "PostController").unwrap();
+        inject_mod_decl(f_b.to_str().unwrap(), "Auth").unwrap();
+        inject_mod_decl(f_b.to_str().unwrap(), "DashboardController").unwrap();
+        // Both must contain all four modules
+        for f in &[f_a, f_b] {
+            let c = fs::read_to_string(f).unwrap();
+            for m in &["HomeController", "Auth", "DashboardController", "PostController"] {
+                assert_eq!(c.matches(&format!("pub mod {};", m)).count(), 1, "{}: {} must appear once", f.display(), m);
+            }
+        }
+    }
+
+    #[test]
+    fn cmb2_49_make_auth_api_then_make_controller_api_file_unchanged() {
+        let d = tmp();
+        let api_f = d.path().join("api.rs");
+        let mod_f = d.path().join("mod.rs");
+        fs::write(&api_f, api_content()).unwrap();
+        fs::write(&mod_f, "").unwrap();
+        // make:auth --api injects into api.rs
+        inject_api(&api_f);
+        // make:controller PostController only touches mod.rs, not api.rs
+        let api_after_auth = fs::read_to_string(&api_f).unwrap();
+        inject_mod_decl(mod_f.to_str().unwrap(), "PostController").unwrap();
+        // api.rs must be exactly the same after make:controller
+        assert_eq!(fs::read_to_string(&api_f).unwrap(), api_after_auth);
+    }
+
+    #[test]
+    fn cmb2_50_full_scenario_controller_request_model_auth() {
+        let d = tmp();
+        let ctrl_mod = d.path().join("ctrl_mod.rs");
+        let req_mod  = d.path().join("req_mod.rs");
+        let mdl_mod  = d.path().join("mdl_mod.rs");
+        let api_f    = d.path().join("api.rs");
+        let web_f    = d.path().join("web.rs");
+        fs::write(&ctrl_mod, "pub mod HomeController;\n").unwrap();
+        fs::write(&req_mod,  "pub mod StoreUserRequest;\n").unwrap();
+        fs::write(&mdl_mod,  "pub mod User;\n").unwrap();
+        fs::write(&api_f, api_content()).unwrap();
+        fs::write(&web_f, web_content()).unwrap();
+        // make:controller PostController
+        inject_mod_decl(ctrl_mod.to_str().unwrap(), "PostController").unwrap();
+        // make:request CreatePostRequest
+        inject_mod_decl(req_mod.to_str().unwrap(), "CreatePostRequest").unwrap();
+        // make:model Post
+        inject_mod_decl(mdl_mod.to_str().unwrap(), "Post").unwrap();
+        // make:auth --api
+        inject_api(&api_f);
+        inject_mod_decl(ctrl_mod.to_str().unwrap(), "Auth").unwrap();
+        inject_mod_decl(req_mod.to_str().unwrap(), "login_request").unwrap();
+        inject_mod_decl(req_mod.to_str().unwrap(), "register_request").unwrap();
+        // make:auth (web separately via web.rs)
+        inject_web(&web_f);
+        // Verify ctrl_mod: HomeController, PostController, Auth
+        let cc = fs::read_to_string(&ctrl_mod).unwrap();
+        for m in &["HomeController", "PostController", "Auth"] {
+            assert_eq!(cc.matches(&format!("pub mod {};", m)).count(), 1, "ctrl: {} once", m);
+        }
+        // Verify req_mod: StoreUserRequest, CreatePostRequest, login_request, register_request
+        let rc = fs::read_to_string(&req_mod).unwrap();
+        for m in &["StoreUserRequest", "CreatePostRequest", "login_request", "register_request"] {
+            assert_eq!(rc.matches(&format!("pub mod {};", m)).count(), 1, "req: {} once", m);
+        }
+        // Verify mdl_mod: User, Post
+        let mc = fs::read_to_string(&mdl_mod).unwrap();
+        for m in &["User", "Post"] {
+            assert_eq!(mc.matches(&format!("pub mod {};", m)).count(), 1, "mdl: {} once", m);
+        }
+        // Verify api.rs has all API auth routes
+        let ac = fs::read_to_string(&api_f).unwrap();
+        for r in &["/api/auth/login", "/api/auth/refresh", "/api/auth/logout", "/api/auth/register", "/api/me"] {
+            assert!(ac.contains(r), "api: missing {}", r);
+        }
+        // Verify web.rs has all web auth routes
+        let wc = fs::read_to_string(&web_f).unwrap();
+        for r in &["\"/login\"", "\"/logout\"", "\"/register\"", "\"/dashboard\""] {
+            assert!(wc.contains(r), "web: missing {}", r);
+        }
     }
 }
