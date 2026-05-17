@@ -2225,4 +2225,773 @@ mod tests {
             assert!(wc.contains(r), "web: missing {}", r);
         }
     }
+
+    // ── Integration tests ─────────────────────────────────────────────────────
+    // Each test creates a real app via `willow new`, then runs make commands in a
+    // specific order, verifying results after every single command.
+    //
+    // A global mutex serializes these tests to avoid set_current_dir races.
+
+    static APP_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn with_app<F: FnOnce() -> anyhow::Result<()>>(f: F) {
+        let _lock = APP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let original = std::env::current_dir().unwrap();
+        let d = tempfile::tempdir().unwrap();
+        std::env::set_current_dir(d.path()).unwrap();
+        crate::commands::new::execute("app").unwrap();
+        std::env::set_current_dir(d.path().join("app")).unwrap();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            f().expect("integration test step failed")
+        }));
+        std::env::set_current_dir(&original).unwrap();
+        drop(d);
+        if let Err(e) = result { std::panic::resume_unwind(e); }
+    }
+
+    fn read_file(path: &str) -> String {
+        std::fs::read_to_string(path).unwrap_or_else(|_| panic!("cannot read {}", path))
+    }
+
+    fn file_exists(path: &str) -> bool {
+        std::path::Path::new(path).exists()
+    }
+
+    fn find_migrations(fragment: &str) -> Vec<std::path::PathBuf> {
+        std::fs::read_dir("database/migrations").unwrap()
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.to_string_lossy().contains(fragment))
+            .collect()
+    }
+
+    // ── Single-command verification ───────────────────────────────────────────
+
+    #[test]
+    fn int_01_make_controller() {
+        with_app(|| {
+            controller("ArticleController")?;
+
+            assert!(file_exists("src/app/Http/Controllers/ArticleController.rs"),
+                "controller file not created");
+            let c = read_file("src/app/Http/Controllers/ArticleController.rs");
+            for action in &["index", "show", "store", "update", "destroy"] {
+                assert!(c.contains(&format!("\"ArticleController {}\"", action)),
+                    "message missing for {}", action);
+            }
+            assert!(read_file("src/app/Http/Controllers/mod.rs")
+                .contains("pub mod ArticleController;"),
+                "ArticleController not in mod.rs");
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn int_02_make_request() {
+        with_app(|| {
+            request("CreateArticleRequest")?;
+
+            assert!(file_exists("src/app/Http/Requests/CreateArticleRequest.rs"));
+            let c = read_file("src/app/Http/Requests/CreateArticleRequest.rs");
+            assert!(c.contains("pub struct CreateArticleRequest"));
+            assert!(c.contains("Validate"));
+            assert!(!c.contains("Serialize"), "request must not derive Serialize");
+            assert!(read_file("src/app/Http/Requests/mod.rs")
+                .contains("pub mod CreateArticleRequest;"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn int_03_make_model() {
+        with_app(|| {
+            model("Article")?;
+
+            assert!(file_exists("src/app/Models/Article.rs"));
+            let c = read_file("src/app/Models/Article.rs");
+            assert!(c.contains("pub struct Article"));
+            assert!(c.contains("impl Article"));
+            assert!(c.contains("pub id: i64,"), "model id must be i64");
+            assert!(read_file("src/app/Models/mod.rs").contains("pub mod Article;"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn int_04_make_view() {
+        with_app(|| {
+            view_file("articles.index")?;
+
+            assert!(file_exists("resources/views/articles/index.jinja.html"));
+            let c = read_file("resources/views/articles/index.jinja.html");
+            assert!(c.contains("{% extends \"layouts.app\" %}"));
+            assert!(c.contains("articles.index"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn int_05_make_middleware() {
+        with_app(|| {
+            middleware("EnsureAdmin")?;
+
+            assert!(file_exists("src/app/Http/Middleware/EnsureAdmin.rs"));
+            assert!(read_file("src/app/Http/Middleware/mod.rs")
+                .contains("pub mod EnsureAdmin;"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn int_06_make_migration() {
+        with_app(|| {
+            migration("create_articles_table")?;
+
+            let ups   = find_migrations("create_articles_table.up.sql");
+            let downs = find_migrations("create_articles_table.down.sql");
+            assert_eq!(ups.len(),   1, "should have exactly 1 up migration");
+            assert_eq!(downs.len(), 1, "should have exactly 1 down migration");
+            let up_c = read_file(ups[0].to_str().unwrap());
+            assert!(up_c.contains("-- Write your UP migration SQL here."));
+            assert!(!up_c.contains("rollback"), "up must not mention rollback");
+            let dn_c = read_file(downs[0].to_str().unwrap());
+            assert!(dn_c.contains("(rollback)"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn int_07_make_auth_web() {
+        with_app(|| {
+            auth(false)?;
+
+            // Controllers
+            assert!(file_exists("src/app/Http/Controllers/Auth/LoginController.rs"));
+            assert!(file_exists("src/app/Http/Controllers/Auth/RegisterController.rs"));
+            assert!(file_exists("src/app/Http/Controllers/DashboardController.rs"));
+            // Views
+            assert!(file_exists("resources/views/auth/login.jinja.html"));
+            assert!(file_exists("resources/views/auth/register.jinja.html"));
+            assert!(file_exists("resources/views/dashboard.jinja.html"));
+            // mod.rs
+            let ctrl_mod = read_file("src/app/Http/Controllers/mod.rs");
+            assert!(ctrl_mod.contains("pub mod Auth;"));
+            assert!(ctrl_mod.contains("pub mod DashboardController;"));
+            // Requests
+            let req_mod = read_file("src/app/Http/Requests/mod.rs");
+            assert!(req_mod.contains("pub mod login_request;"));
+            assert!(req_mod.contains("pub mod register_request;"));
+            // Routes
+            let web_rs = read_file("src/routes/web.rs");
+            for r in &["/login", "/logout", "/register", "/dashboard"] {
+                assert!(web_rs.contains(r), "web.rs missing {}", r);
+            }
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn int_08_make_auth_api() {
+        with_app(|| {
+            auth(true)?;
+
+            assert!(file_exists("src/app/Http/Controllers/Auth/ApiLoginController.rs"));
+            assert!(file_exists("src/app/Http/Controllers/Auth/ApiRegisterController.rs"));
+            assert!(!file_exists("src/app/Http/Controllers/DashboardController.rs"),
+                "api auth must not create DashboardController");
+            let api_rs = read_file("src/routes/api.rs");
+            for r in &["/api/auth/login", "/api/auth/refresh",
+                        "/api/auth/logout", "/api/auth/register", "/api/me"] {
+                assert!(api_rs.contains(r), "api.rs missing {}", r);
+            }
+            // web.rs must be untouched (no login route)
+            assert!(!read_file("src/routes/web.rs").contains("\"/login\""),
+                "api auth must not touch web.rs");
+            Ok(())
+        });
+    }
+
+    // ── Multi-command: controller → auth (web) ────────────────────────────────
+
+    #[test]
+    fn int_09_controller_then_auth_web() {
+        with_app(|| {
+            // Step 1
+            controller("PostController")?;
+            assert!(file_exists("src/app/Http/Controllers/PostController.rs"),
+                "step1: PostController missing");
+            let mod_after_ctrl = read_file("src/app/Http/Controllers/mod.rs");
+            assert!(mod_after_ctrl.contains("pub mod PostController;"),
+                "step1: PostController not in mod.rs");
+
+            // Step 2
+            auth(false)?;
+            assert!(file_exists("src/app/Http/Controllers/Auth/LoginController.rs"),
+                "step2: LoginController missing");
+            let mod_final = read_file("src/app/Http/Controllers/mod.rs");
+            // PostController must survive
+            assert!(mod_final.contains("pub mod PostController;"),
+                "step2: PostController lost from mod.rs");
+            assert!(mod_final.contains("pub mod Auth;"));
+            assert!(mod_final.contains("pub mod DashboardController;"));
+            // PostController file content must be intact
+            assert!(read_file("src/app/Http/Controllers/PostController.rs")
+                .contains("\"PostController index\""),
+                "step2: PostController file corrupted");
+            // Web routes present
+            let web = read_file("src/routes/web.rs");
+            for r in &["/login", "/logout", "/register", "/dashboard"] {
+                assert!(web.contains(r), "step2: web.rs missing {}", r);
+            }
+            Ok(())
+        });
+    }
+
+    // ── Multi-command: auth (web) → controller ────────────────────────────────
+
+    #[test]
+    fn int_10_auth_web_then_controller() {
+        with_app(|| {
+            // Step 1
+            auth(false)?;
+            let web_after = read_file("src/routes/web.rs");
+            assert!(web_after.contains("/login"), "step1: /login missing");
+
+            // Step 2
+            controller("CommentController")?;
+            // Routes must be unchanged
+            assert_eq!(read_file("src/routes/web.rs"), web_after,
+                "step2: web.rs changed after make:controller");
+            let ctrl_mod = read_file("src/app/Http/Controllers/mod.rs");
+            assert!(ctrl_mod.contains("pub mod CommentController;"),
+                "step2: CommentController missing from mod.rs");
+            assert!(ctrl_mod.contains("pub mod Auth;"),
+                "step2: Auth lost from mod.rs");
+            Ok(())
+        });
+    }
+
+    // ── Multi-command: request → model → controller ───────────────────────────
+
+    #[test]
+    fn int_11_request_then_model_then_controller() {
+        with_app(|| {
+            // Step 1: make:request
+            request("StorePostRequest")?;
+            assert!(file_exists("src/app/Http/Requests/StorePostRequest.rs"),
+                "step1: file missing");
+            assert!(read_file("src/app/Http/Requests/StorePostRequest.rs")
+                .contains("pub struct StorePostRequest"), "step1: wrong struct name");
+            assert!(read_file("src/app/Http/Requests/mod.rs")
+                .contains("pub mod StorePostRequest;"), "step1: not in requests mod.rs");
+
+            // Step 2: make:model (must not touch Requests)
+            model("Post")?;
+            assert!(file_exists("src/app/Models/Post.rs"), "step2: model file missing");
+            assert!(read_file("src/app/Models/Post.rs").contains("impl Post"),
+                "step2: impl block missing");
+            assert!(read_file("src/app/Http/Requests/mod.rs")
+                .contains("pub mod StorePostRequest;"),
+                "step2: requests mod.rs corrupted by model command");
+
+            // Step 3: make:controller (must not touch Requests or Models)
+            controller("PostController")?;
+            assert!(file_exists("src/app/Http/Controllers/PostController.rs"),
+                "step3: controller file missing");
+            assert!(read_file("src/app/Models/mod.rs").contains("pub mod Post;"),
+                "step3: Models mod.rs corrupted by controller command");
+            assert!(read_file("src/app/Http/Requests/mod.rs")
+                .contains("pub mod StorePostRequest;"),
+                "step3: Requests mod.rs corrupted by controller command");
+            Ok(())
+        });
+    }
+
+    // ── Multi-command: controller → migration → auth (api) ───────────────────
+
+    #[test]
+    fn int_12_controller_then_migration_then_auth_api() {
+        with_app(|| {
+            // Step 1
+            controller("ArticleController")?;
+            assert!(file_exists("src/app/Http/Controllers/ArticleController.rs"),
+                "step1: controller missing");
+
+            // Step 2
+            migration("create_articles_table")?;
+            assert_eq!(find_migrations("create_articles_table.up.sql").len(), 1,
+                "step2: wrong number of up migrations");
+            assert!(file_exists("src/app/Http/Controllers/ArticleController.rs"),
+                "step2: controller removed by migration command");
+
+            // Step 3
+            auth(true)?;
+            assert!(file_exists("src/app/Http/Controllers/ArticleController.rs"),
+                "step3: controller removed by auth command");
+            assert_eq!(find_migrations("create_articles_table.up.sql").len(), 1,
+                "step3: migration count changed after auth");
+            let api = read_file("src/routes/api.rs");
+            assert!(api.contains("/api/auth/login"), "step3: api route missing");
+            assert!(api.contains("/api/me"),          "step3: /api/me missing");
+            let ctrl_mod = read_file("src/app/Http/Controllers/mod.rs");
+            assert!(ctrl_mod.contains("pub mod ArticleController;"),
+                "step3: ArticleController lost after auth");
+            assert!(ctrl_mod.contains("pub mod Auth;"),
+                "step3: Auth not added to mod.rs");
+            Ok(())
+        });
+    }
+
+    // ── Multi-command: auth (api) → controller → request → model ─────────────
+
+    #[test]
+    fn int_13_auth_api_then_controller_then_request_then_model() {
+        with_app(|| {
+            // Step 1
+            auth(true)?;
+            let api_snapshot = read_file("src/routes/api.rs");
+            assert!(api_snapshot.contains("/api/me"), "step1: /api/me missing");
+
+            // Step 2: make:controller must not touch api.rs
+            controller("TagController")?;
+            assert_eq!(read_file("src/routes/api.rs"), api_snapshot,
+                "step2: api.rs changed by make:controller");
+            let ctrl_mod = read_file("src/app/Http/Controllers/mod.rs");
+            assert!(ctrl_mod.contains("pub mod TagController;"),
+                "step2: TagController not in mod.rs");
+            assert!(ctrl_mod.contains("pub mod Auth;"),
+                "step2: Auth lost from mod.rs");
+
+            // Step 3: make:request must not touch Controllers or api.rs
+            request("StoreTagRequest")?;
+            assert!(read_file("src/app/Http/Requests/mod.rs")
+                .contains("pub mod StoreTagRequest;"), "step3: not in requests mod.rs");
+            assert!(read_file("src/app/Http/Controllers/mod.rs")
+                .contains("pub mod TagController;"),
+                "step3: controllers mod.rs corrupted by request command");
+            assert_eq!(read_file("src/routes/api.rs"), api_snapshot,
+                "step3: api.rs changed by make:request");
+
+            // Step 4: make:model must not touch anything above
+            model("Tag")?;
+            assert!(read_file("src/app/Models/mod.rs")
+                .contains("pub mod Tag;"), "step4: Tag not in models mod.rs");
+            assert!(read_file("src/app/Http/Requests/mod.rs")
+                .contains("pub mod StoreTagRequest;"),
+                "step4: requests mod.rs corrupted by model command");
+            assert_eq!(read_file("src/routes/api.rs"), api_snapshot,
+                "step4: api.rs changed by make:model");
+            Ok(())
+        });
+    }
+
+    // ── Multi-command: view → middleware → auth (web) ─────────────────────────
+
+    #[test]
+    fn int_14_view_then_middleware_then_auth_web() {
+        with_app(|| {
+            // Step 1
+            view_file("admin.dashboard")?;
+            assert!(file_exists("resources/views/admin/dashboard.jinja.html"),
+                "step1: view missing");
+            let view_content = read_file("resources/views/admin/dashboard.jinja.html");
+            assert!(view_content.contains("admin.dashboard"), "step1: name not in view");
+
+            // Step 2
+            middleware("AdminOnly")?;
+            assert!(file_exists("src/app/Http/Middleware/AdminOnly.rs"),
+                "step2: middleware file missing");
+            assert_eq!(read_file("resources/views/admin/dashboard.jinja.html"), view_content,
+                "step2: view file changed by middleware command");
+
+            // Step 3
+            auth(false)?;
+            assert!(file_exists("resources/views/auth/login.jinja.html"),
+                "step3: auth login view missing");
+            // Earlier files must survive
+            assert!(file_exists("resources/views/admin/dashboard.jinja.html"),
+                "step3: custom view removed by auth command");
+            assert!(read_file("src/app/Http/Middleware/mod.rs")
+                .contains("pub mod AdminOnly;"),
+                "step3: AdminOnly lost from middleware mod.rs after auth");
+            Ok(())
+        });
+    }
+
+    // ── Multi-command: same commands, reversed order ───────────────────────────
+
+    #[test]
+    fn int_15_reversed_order_same_final_state() {
+        // Forward: controller → request → model → auth(web)
+        // Reversed: auth(web) → model → request → controller
+        // Final Controllers mod.rs state must include the same entries either way.
+
+        with_app(|| {
+            auth(false)?;
+
+            // After auth: verify auth entries
+            let ctrl_mod = read_file("src/app/Http/Controllers/mod.rs");
+            assert!(ctrl_mod.contains("pub mod Auth;"));
+            assert!(ctrl_mod.contains("pub mod DashboardController;"));
+
+            model("Widget")?;
+            assert!(read_file("src/app/Models/mod.rs").contains("pub mod Widget;"),
+                "Widget not in models mod.rs");
+
+            request("StoreWidgetRequest")?;
+            assert!(read_file("src/app/Http/Requests/mod.rs")
+                .contains("pub mod StoreWidgetRequest;"));
+
+            controller("WidgetController")?;
+            // Final state: WidgetController in controllers mod, Auth still there
+            let final_ctrl = read_file("src/app/Http/Controllers/mod.rs");
+            assert!(final_ctrl.contains("pub mod WidgetController;"));
+            assert!(final_ctrl.contains("pub mod Auth;"),
+                "Auth lost after adding WidgetController");
+            // Routes unchanged by non-auth commands
+            let web = read_file("src/routes/web.rs");
+            for r in &["/login", "/logout", "/register", "/dashboard"] {
+                assert!(web.contains(r), "route {} lost", r);
+            }
+            Ok(())
+        });
+    }
+
+    // ── Duplicate command: error + no corruption ───────────────────────────────
+
+    #[test]
+    fn int_16_duplicate_controller_returns_error_no_corruption() {
+        with_app(|| {
+            controller("DupeController")?;
+            let original = read_file("src/app/Http/Controllers/DupeController.rs");
+
+            // Second call must fail
+            assert!(controller("DupeController").is_err(),
+                "second controller() call must return Err");
+            // File must be unchanged
+            assert_eq!(read_file("src/app/Http/Controllers/DupeController.rs"), original,
+                "controller file modified by failed second call");
+            // mod.rs must have exactly one occurrence
+            assert_eq!(
+                read_file("src/app/Http/Controllers/mod.rs")
+                    .matches("pub mod DupeController;").count(),
+                1,
+                "mod.rs has duplicate entry after failed second call"
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn int_17_duplicate_model_returns_error_no_corruption() {
+        with_app(|| {
+            model("Post")?;
+            let original = read_file("src/app/Models/Post.rs");
+
+            assert!(model("Post").is_err(), "second model() must return Err");
+            assert_eq!(read_file("src/app/Models/Post.rs"), original);
+            assert_eq!(
+                read_file("src/app/Models/mod.rs").matches("pub mod Post;").count(),
+                1
+            );
+            Ok(())
+        });
+    }
+
+    // ── auth idempotency ──────────────────────────────────────────────────────
+
+    #[test]
+    fn int_18_make_auth_web_idempotent() {
+        with_app(|| {
+            auth(false)?;
+            let web_snap  = read_file("src/routes/web.rs");
+            let mod_snap  = read_file("src/app/Http/Controllers/mod.rs");
+            let req_snap  = read_file("src/app/Http/Requests/mod.rs");
+
+            // Second call: files exist → skips files, routes already present → skips injection
+            auth(false)?;
+
+            assert_eq!(read_file("src/routes/web.rs"), web_snap,
+                "web.rs changed on second auth(web) call");
+            assert_eq!(read_file("src/app/Http/Controllers/mod.rs"), mod_snap,
+                "controllers mod.rs changed on second auth(web) call");
+            assert_eq!(read_file("src/app/Http/Requests/mod.rs"), req_snap,
+                "requests mod.rs changed on second auth(web) call");
+            // Each route appears exactly once
+            for r in &["\"/login\"", "\"/logout\"", "\"/register\"", "\"/dashboard\""] {
+                assert_eq!(read_file("src/routes/web.rs").matches(r).count(), 1,
+                    "{} appears more than once", r);
+            }
+            Ok(())
+        });
+    }
+
+    // ── auth(api) then auth(web): both applied, no conflict ───────────────────
+
+    #[test]
+    fn int_19_auth_api_then_auth_web_both_applied() {
+        with_app(|| {
+            // Step 1
+            auth(true)?;
+            let api_snap = read_file("src/routes/api.rs");
+            assert!(api_snap.contains("/api/me"), "step1: /api/me missing");
+            assert!(file_exists("src/app/Http/Controllers/Auth/ApiLoginController.rs"));
+
+            // Step 2
+            auth(false)?;
+            // API routes must be untouched
+            assert_eq!(read_file("src/routes/api.rs"), api_snap,
+                "step2: api.rs changed by auth(web)");
+            // Web routes must be injected
+            let web = read_file("src/routes/web.rs");
+            for r in &["/login", "/logout", "/register", "/dashboard"] {
+                assert!(web.contains(r), "step2: web.rs missing {}", r);
+            }
+            // Auth/mod.rs must contain all 4 controller declarations
+            let auth_mod = read_file("src/app/Http/Controllers/Auth/mod.rs");
+            for decl in &["ApiLoginController", "ApiRegisterController",
+                           "LoginController", "RegisterController"] {
+                assert!(auth_mod.contains(&format!("pub mod {};", decl)),
+                    "Auth/mod.rs missing {}", decl);
+            }
+            Ok(())
+        });
+    }
+
+    // ── Many controllers, then auth: all survive ──────────────────────────────
+
+    #[test]
+    fn int_20_many_controllers_then_auth_all_in_mod() {
+        with_app(|| {
+            let controllers = ["PostController", "CommentController",
+                               "TagController",  "CategoryController"];
+
+            // Create each controller and verify immediately after
+            for name in &controllers {
+                controller(name)?;
+                assert!(file_exists(&format!("src/app/Http/Controllers/{}.rs", name)),
+                    "{}: file not created", name);
+                assert!(
+                    read_file("src/app/Http/Controllers/mod.rs")
+                        .contains(&format!("pub mod {};", name)),
+                    "{}: not in mod.rs after its own creation", name
+                );
+            }
+
+            // Run auth(web)
+            auth(false)?;
+
+            // Every controller + auth entries must appear exactly once
+            let ctrl_mod = read_file("src/app/Http/Controllers/mod.rs");
+            for name in controllers.iter()
+                .chain(&["Auth", "DashboardController"])
+            {
+                assert_eq!(
+                    ctrl_mod.matches(&format!("pub mod {};", name)).count(),
+                    1,
+                    "{} must appear exactly once in mod.rs", name
+                );
+            }
+            // Web routes present
+            let web = read_file("src/routes/web.rs");
+            for r in &["/login", "/logout", "/register", "/dashboard"] {
+                assert!(web.contains(r), "web.rs missing {}", r);
+            }
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn int_21_controller_and_request_do_not_cross_contaminate_mod_files() {
+        with_app(|| {
+            controller("BlogController")?;
+            request("CreateBlog")?;
+
+            let ctrl_mod = read_file("src/app/Http/Controllers/mod.rs");
+            let req_mod  = read_file("src/app/Http/Requests/mod.rs");
+
+            assert!(ctrl_mod.contains("pub mod BlogController;"), "controller missing from Controllers/mod.rs");
+            assert!(req_mod.contains("pub mod CreateBlog;"), "request missing from Requests/mod.rs");
+
+            assert!(!ctrl_mod.contains("CreateBlog"), "request name leaked into Controllers/mod.rs");
+            assert!(!req_mod.contains("BlogController"), "controller name leaked into Requests/mod.rs");
+
+            assert!(file_exists("src/app/Http/Controllers/BlogController.rs"));
+            assert!(file_exists("src/app/Http/Requests/CreateBlog.rs"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn int_22_model_and_view_are_fully_independent() {
+        with_app(|| {
+            model("Post")?;
+            view_file("posts/index")?;
+
+            let model_mod = read_file("src/app/Models/mod.rs");
+            assert!(model_mod.contains("pub mod Post;"), "model missing from Models/mod.rs");
+            assert!(!model_mod.contains("posts"), "view path leaked into Models/mod.rs");
+
+            assert!(file_exists("src/app/Models/Post.rs"));
+            assert!(file_exists("resources/views/posts/index.jinja.html"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn int_23_all_six_non_auth_commands_work_together() {
+        with_app(|| {
+            controller("GalleryController")?;
+            request("StoreGallery")?;
+            model("Gallery")?;
+            view_file("gallery/show")?;
+            middleware("RateLimit")?;
+            migration("create_galleries_table")?;
+
+            assert!(file_exists("src/app/Http/Controllers/GalleryController.rs"));
+            assert!(file_exists("src/app/Http/Requests/StoreGallery.rs"));
+            assert!(file_exists("src/app/Models/Gallery.rs"));
+            assert!(file_exists("resources/views/gallery/show.jinja.html"));
+            assert!(file_exists("src/app/Http/Middleware/RateLimit.rs"));
+
+            let ctrl_mod = read_file("src/app/Http/Controllers/mod.rs");
+            assert!(ctrl_mod.contains("pub mod GalleryController;"));
+
+            let req_mod = read_file("src/app/Http/Requests/mod.rs");
+            assert!(req_mod.contains("pub mod StoreGallery;"));
+
+            let mdl_mod = read_file("src/app/Models/mod.rs");
+            assert!(mdl_mod.contains("pub mod Gallery;"));
+
+            let mw_mod = read_file("src/app/Http/Middleware/mod.rs");
+            assert!(mw_mod.contains("pub mod RateLimit;"));
+
+            assert!(!find_migrations("create_galleries_table").is_empty(), "migration file not found");
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn int_24_three_migrations_each_get_own_file() {
+        with_app(|| {
+            migration("create_orders_table")?;
+            migration("create_products_table")?;
+            migration("create_reviews_table")?;
+
+            let orders   = find_migrations("create_orders_table");
+            let products = find_migrations("create_products_table");
+            let reviews  = find_migrations("create_reviews_table");
+
+            assert_eq!(orders.len(),   2, "expected up+down for create_orders_table");
+            assert_eq!(products.len(), 2, "expected up+down for create_products_table");
+            assert_eq!(reviews.len(),  2, "expected up+down for create_reviews_table");
+
+            // Each migration has its own prefix — no file is shared
+            let order_names:   Vec<_> = orders.iter().map(|p| p.file_name().unwrap().to_string_lossy().to_string()).collect();
+            let product_names: Vec<_> = products.iter().map(|p| p.file_name().unwrap().to_string_lossy().to_string()).collect();
+            for name in &order_names {
+                assert!(!product_names.contains(name), "migration file name collision: {}", name);
+            }
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn int_25_two_controllers_and_two_requests_no_cross_entries() {
+        with_app(|| {
+            controller("BlogController")?;
+            controller("CommentController")?;
+            request("StoreBlog")?;
+            request("StoreComment")?;
+
+            let ctrl_mod = read_file("src/app/Http/Controllers/mod.rs");
+            let req_mod  = read_file("src/app/Http/Requests/mod.rs");
+
+            assert!(ctrl_mod.contains("pub mod BlogController;"));
+            assert!(ctrl_mod.contains("pub mod CommentController;"));
+            assert!(req_mod.contains("pub mod StoreBlog;"));
+            assert!(req_mod.contains("pub mod StoreComment;"));
+
+            // No leakage
+            assert!(!ctrl_mod.contains("StoreBlog"));
+            assert!(!ctrl_mod.contains("StoreComment"));
+            assert!(!req_mod.contains("BlogController"));
+            assert!(!req_mod.contains("CommentController"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn int_26_middleware_does_not_pollute_controller_mod() {
+        with_app(|| {
+            controller("ArticleController")?;
+            middleware("Throttle")?;
+
+            let ctrl_mod = read_file("src/app/Http/Controllers/mod.rs");
+            let mw_mod   = read_file("src/app/Http/Middleware/mod.rs");
+
+            assert!(ctrl_mod.contains("pub mod ArticleController;"));
+            assert!(!ctrl_mod.contains("Throttle"), "middleware name leaked into Controllers/mod.rs");
+
+            assert!(mw_mod.contains("pub mod Throttle;"));
+            assert!(!mw_mod.contains("ArticleController"), "controller name leaked into Middleware/mod.rs");
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn int_27_view_at_three_level_nested_path() {
+        with_app(|| {
+            view_file("products/categories/list")?;
+            assert!(file_exists("resources/views/products/categories/list.jinja.html"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn int_28_multiple_views_in_different_subdirectories() {
+        with_app(|| {
+            view_file("orders/index")?;
+            view_file("reports/summary")?;
+            view_file("admin/users/list")?;
+
+            assert!(file_exists("resources/views/orders/index.jinja.html"));
+            assert!(file_exists("resources/views/reports/summary.jinja.html"));
+            assert!(file_exists("resources/views/admin/users/list.jinja.html"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn int_29_migration_and_controller_are_completely_independent() {
+        with_app(|| {
+            migration("add_slug_to_posts")?;
+            controller("SlugController")?;
+
+            assert!(!find_migrations("add_slug_to_posts").is_empty());
+            assert!(file_exists("src/app/Http/Controllers/SlugController.rs"));
+
+            let ctrl_mod = read_file("src/app/Http/Controllers/mod.rs");
+            assert!(ctrl_mod.contains("pub mod SlugController;"));
+            assert!(!ctrl_mod.contains("add_slug"), "migration name leaked into Controllers/mod.rs");
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn int_30_request_and_model_mod_files_are_distinct() {
+        with_app(|| {
+            request("UpdateProfile")?;
+            model("Profile")?;
+
+            let req_mod = read_file("src/app/Http/Requests/mod.rs");
+            let mdl_mod = read_file("src/app/Models/mod.rs");
+
+            assert!(req_mod.contains("pub mod UpdateProfile;"));
+            assert!(mdl_mod.contains("pub mod Profile;"));
+
+            assert!(!req_mod.contains("pub mod Profile;"), "model leaked into Requests/mod.rs");
+            assert!(!mdl_mod.contains("UpdateProfile"), "request leaked into Models/mod.rs");
+            Ok(())
+        });
+    }
 }

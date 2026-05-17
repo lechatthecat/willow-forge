@@ -58,3 +58,83 @@ impl FromRequestParts<Arc<AppState>> for JwtUser {
         Ok(JwtUser { id: claims.sub, jti: claims.jti })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{body::Body, http::{Request, StatusCode, header}, response::IntoResponse, routing::get, Router};
+    use std::sync::Arc;
+    use tower::ServiceExt;
+    use crate::app_state::{AppState, Config, RedisConfig, Services};
+    use crate::jwt::Jwt;
+
+    fn dummy_state() -> Arc<AppState> {
+        let db = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgresql://fake:fake@127.0.0.1:5432/fake")
+            .unwrap();
+        let redis = Arc::new(
+            redis::cluster::ClusterClient::new(vec!["redis://127.0.0.1:9999/"])
+                .unwrap(),
+        );
+        Arc::new(AppState {
+            config: Config {
+                app_name: "test".to_string(),
+                app_env: "test".to_string(),
+                app_debug: false,
+                redis: RedisConfig { nodes: vec![] },
+            },
+            services: Services { db, redis },
+            views: minijinja::Environment::new(),
+        })
+    }
+
+    async fn jwt_handler(_auth: JwtUser) -> impl IntoResponse {
+        StatusCode::OK
+    }
+
+    fn jwt_app() -> Router {
+        Router::new()
+            .route("/api/me", get(jwt_handler))
+            .with_state(dummy_state())
+    }
+
+    #[tokio::test]
+    async fn ju_01_no_auth_header_returns_401() {
+        let req = Request::builder().uri("/api/me").body(Body::empty()).unwrap();
+        assert_eq!(jwt_app().oneshot(req).await.unwrap().status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn ju_02_non_bearer_format_returns_401() {
+        let req = Request::builder()
+            .uri("/api/me")
+            .header(header::AUTHORIZATION, "Token some-token")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(jwt_app().oneshot(req).await.unwrap().status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn ju_03_invalid_jwt_returns_401() {
+        let req = Request::builder()
+            .uri("/api/me")
+            .header(header::AUTHORIZATION, "Bearer not.a.valid.jwt")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(jwt_app().oneshot(req).await.unwrap().status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn ju_04_valid_jwt_with_unreachable_redis_returns_200() {
+        // is_blacklisted() returns Err when Redis is unreachable.
+        // unwrap_or(false) treats the failure as "not blacklisted" — request proceeds.
+        unsafe { std::env::set_var("JWT_SECRET", "test-secret") };
+        let token = Jwt::encode(1).unwrap();
+        let req = Request::builder()
+            .uri("/api/me")
+            .header(header::AUTHORIZATION, format!("Bearer {}", token))
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(jwt_app().oneshot(req).await.unwrap().status(), StatusCode::OK);
+    }
+}
