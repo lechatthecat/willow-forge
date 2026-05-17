@@ -190,6 +190,81 @@ mod tests {
         assert_eq!(body["message"], "Email already taken.");
     }
 
+    // ── Untested variants — status ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn ae_01_service_unavailable_is_503() {
+        assert_eq!(
+            status_of(AppError::ServiceUnavailable).await,
+            StatusCode::SERVICE_UNAVAILABLE,
+        );
+    }
+
+    #[tokio::test]
+    async fn ae_02_too_many_requests_is_429() {
+        assert_eq!(
+            status_of(AppError::TooManyRequests).await,
+            StatusCode::TOO_MANY_REQUESTS,
+        );
+    }
+
+    #[tokio::test]
+    async fn ae_03_http_400_returns_400() {
+        assert_eq!(
+            status_of(AppError::Http(400, "Bad request".to_string())).await,
+            StatusCode::BAD_REQUEST,
+        );
+    }
+
+    #[tokio::test]
+    async fn ae_04_http_503_returns_503() {
+        assert_eq!(
+            status_of(AppError::Http(503, "Down".to_string())).await,
+            StatusCode::SERVICE_UNAVAILABLE,
+        );
+    }
+
+    #[tokio::test]
+    async fn ae_05_http_invalid_code_falls_back_to_500() {
+        // 1000 is outside the valid 100-999 range, so from_u16 returns Err and falls back to 500.
+        assert_eq!(
+            status_of(AppError::Http(1000, "x".to_string())).await,
+            StatusCode::INTERNAL_SERVER_ERROR,
+        );
+    }
+
+    // ── Untested variants — body shape ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn ae_06_forbidden_body_has_message_key() {
+        let body = body_json(AppError::Forbidden).await;
+        assert!(body.get("message").is_some());
+    }
+
+    #[tokio::test]
+    async fn ae_07_service_unavailable_body_has_message_key() {
+        let body = body_json(AppError::ServiceUnavailable).await;
+        assert!(body.get("message").is_some());
+    }
+
+    #[tokio::test]
+    async fn ae_08_too_many_requests_body_has_message_key() {
+        let body = body_json(AppError::TooManyRequests).await;
+        assert!(body.get("message").is_some());
+    }
+
+    #[tokio::test]
+    async fn ae_09_http_message_is_preserved_in_body() {
+        let body = body_json(AppError::Http(400, "custom error".to_string())).await;
+        assert_eq!(body["message"], "custom error");
+    }
+
+    #[tokio::test]
+    async fn ae_10_internal_body_has_message_key() {
+        let body = body_json(AppError::Internal).await;
+        assert!(body.get("message").is_some());
+    }
+
     // ── DB integration test ───────────────────────────────────────────────────
 
     #[tokio::test]

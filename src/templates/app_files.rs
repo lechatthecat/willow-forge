@@ -2663,4 +2663,542 @@ mod tests {
         assert!(!out.chars().any(|c| ('\u{3040}'..='\u{30FF}').contains(&c)
             || ('\u{4E00}'..='\u{9FFF}').contains(&c)));
     }
+
+    // ── make_auth_register_controller (15) ────────────────────────────────────
+
+    // rc_01. regression: snake_case module import
+    #[test]
+    fn rc_01_imports_snake_case_register_request() {
+        assert!(make_auth_register_controller("my_app").contains("register_request::RegisterRequest"));
+    }
+    // rc_02. regression: PascalCase module path banned
+    #[test]
+    fn rc_02_no_pascal_case_register_request_import() {
+        assert!(!make_auth_register_controller("my_app").contains("RegisterRequest::RegisterRequest"));
+    }
+    // rc_03. regression: #[path] banned
+    #[test]
+    fn rc_03_no_path_attribute() {
+        assert!(!make_auth_register_controller("my_app").contains("#[path"));
+    }
+    // rc_04. security: password must not be stored in flash
+    #[test]
+    fn rc_04_password_not_in_flash() {
+        assert!(!make_auth_register_controller("my_app").contains("flash_old_password"));
+    }
+    // rc_05. behavior: show() reads AND forgets flash_old_name
+    #[test]
+    fn rc_05_show_reads_and_forgets_flash_old_name() {
+        let out = make_auth_register_controller("my_app");
+        let show_pos = out.find("pub async fn show(").unwrap();
+        let store_pos = out.find("pub async fn store(").unwrap();
+        let show_body = &out[show_pos..store_pos];
+        assert!(show_body.contains("get(\"flash_old_name\")") && show_body.contains("forget(\"flash_old_name\")"));
+    }
+    // rc_06. behavior: show() reads AND forgets flash_old_email
+    #[test]
+    fn rc_06_show_reads_and_forgets_flash_old_email() {
+        let out = make_auth_register_controller("my_app");
+        let show_pos = out.find("pub async fn show(").unwrap();
+        let store_pos = out.find("pub async fn store(").unwrap();
+        let show_body = &out[show_pos..store_pos];
+        assert!(show_body.contains("get(\"flash_old_email\")") && show_body.contains("forget(\"flash_old_email\")"));
+    }
+    // rc_07. behavior: show() renders correct view name
+    #[test]
+    fn rc_07_show_renders_auth_register_view() {
+        let out = make_auth_register_controller("my_app");
+        let show_pos = out.find("pub async fn show(").unwrap();
+        let store_pos = out.find("pub async fn store(").unwrap();
+        assert!(out[show_pos..store_pos].contains("\"auth.register\""));
+    }
+    // rc_08. behavior: show() passes all 3 context vars
+    #[test]
+    fn rc_08_show_passes_three_context_vars() {
+        let out = make_auth_register_controller("my_app");
+        let show_pos = out.find("pub async fn show(").unwrap();
+        let store_pos = out.find("pub async fn store(").unwrap();
+        let show_body = &out[show_pos..store_pos];
+        assert!(show_body.contains("flash_error =>") && show_body.contains("old_name =>") && show_body.contains("old_email =>"));
+    }
+    // rc_09. behavior: validation error redirects to /register
+    #[test]
+    fn rc_09_validation_error_redirects_to_register() {
+        let out = make_auth_register_controller("my_app");
+        let store_pos = out.find("pub async fn store(").unwrap();
+        assert!(out[store_pos..].contains("Redirect::to(\"/register\")"));
+    }
+    // rc_10. behavior: success redirects to /login not /dashboard
+    #[test]
+    fn rc_10_success_redirects_to_login() {
+        let out = make_auth_register_controller("my_app");
+        let store_pos = out.find("pub async fn store(").unwrap();
+        assert!(out[store_pos..].contains("Redirect::to(\"/login\")"));
+    }
+    // rc_11. behavior: flash_old_name is set on multiple error paths
+    #[test]
+    fn rc_11_flash_old_name_set_on_multiple_error_paths() {
+        let out = make_auth_register_controller("my_app");
+        let store_pos = out.find("pub async fn store(").unwrap();
+        assert!(out[store_pos..].matches("put(\"flash_old_name\"").count() >= 2);
+    }
+    // rc_12. behavior: email duplicate uses constraint name
+    #[test]
+    fn rc_12_email_duplicate_uses_constraint_name() {
+        assert!(make_auth_register_controller("my_app").contains("users_email_key"));
+    }
+    // rc_13. behavior: email duplicate returns Conflict or specific message
+    #[test]
+    fn rc_13_email_duplicate_handled_specifically() {
+        let out = make_auth_register_controller("my_app");
+        assert!(out.contains("already registered") || out.contains("AppError::Conflict"));
+    }
+    // rc_14. behavior: validation runs before DB access
+    #[test]
+    fn rc_14_validation_before_db_access() {
+        let out = make_auth_register_controller("my_app");
+        let store_pos = out.find("pub async fn store(").unwrap();
+        let store_body = &out[store_pos..];
+        let validate_pos = store_body.find("req.validate()").unwrap();
+        let sqlx_pos = store_body.find("sqlx::query_as").unwrap();
+        assert!(validate_pos < sqlx_pos, "validate() must appear before sqlx::query_as");
+    }
+    // rc_15. regression: no Japanese text
+    #[test]
+    fn rc_15_no_japanese_text() {
+        let out = make_auth_register_controller("my_app");
+        assert!(!out.chars().any(|c| ('\u{3040}'..='\u{30FF}').contains(&c)
+            || ('\u{4E00}'..='\u{9FFF}').contains(&c)));
+    }
+
+    // ── make_auth_api_register_controller (15) ────────────────────────────────
+
+    // arc_01. regression: snake_case import
+    #[test]
+    fn arc_01_imports_snake_case_register_request() {
+        assert!(make_auth_api_register_controller("my_app").contains("register_request::RegisterRequest"));
+    }
+    // arc_02. regression: PascalCase import banned
+    #[test]
+    fn arc_02_no_pascal_case_register_request() {
+        assert!(!make_auth_api_register_controller("my_app").contains("RegisterRequest::RegisterRequest"));
+    }
+    // arc_03. regression: #[path] banned
+    #[test]
+    fn arc_03_no_path_attribute() {
+        assert!(!make_auth_api_register_controller("my_app").contains("#[path"));
+    }
+    // arc_04. regression: API has no session
+    #[test]
+    fn arc_04_no_session_calls() {
+        assert!(!make_auth_api_register_controller("my_app").contains("session."));
+    }
+    // arc_05. regression: API does not redirect
+    #[test]
+    fn arc_05_no_redirect() {
+        assert!(!make_auth_api_register_controller("my_app").contains("Redirect::"));
+    }
+    // arc_06. regression: API does not call view()
+    #[test]
+    fn arc_06_no_view_call() {
+        assert!(!make_auth_api_register_controller("my_app").contains("view("));
+    }
+    // arc_07. behavior: uses ValidatedJson extractor
+    #[test]
+    fn arc_07_uses_validated_json() {
+        assert!(make_auth_api_register_controller("my_app")
+            .contains("ValidatedJson(req): ValidatedJson<RegisterRequest>"));
+    }
+    // arc_08. behavior: Hash::make uses ? for error propagation
+    #[test]
+    fn arc_08_hash_make_uses_question_mark() {
+        assert!(make_auth_api_register_controller("my_app").contains("Hash::make(&req.password)?"));
+    }
+    // arc_09. behavior: success returns 201 CREATED
+    #[test]
+    fn arc_09_returns_status_created() {
+        assert!(make_auth_api_register_controller("my_app").contains("StatusCode::CREATED"));
+    }
+    // arc_10. behavior: response includes token
+    #[test]
+    fn arc_10_response_includes_token() {
+        assert!(make_auth_api_register_controller("my_app").contains("\"token\""));
+    }
+    // arc_11. behavior: email duplicate → Conflict with message
+    #[test]
+    fn arc_11_email_duplicate_is_conflict() {
+        let out = make_auth_api_register_controller("my_app");
+        assert!(out.contains("users_email_key") && out.contains("AppError::Conflict"));
+    }
+    // arc_12. behavior: JWT issued via Jwt::encode
+    #[test]
+    fn arc_12_jwt_encode_called() {
+        assert!(make_auth_api_register_controller("my_app").contains("Jwt::encode(u.id as i64)?"));
+    }
+    // arc_13. security: response does not include password
+    #[test]
+    fn arc_13_response_excludes_password() {
+        assert!(!make_auth_api_register_controller("my_app").contains("u.password"));
+    }
+    // arc_14. behavior: inserts into users table
+    #[test]
+    fn arc_14_inserts_into_users_table() {
+        assert!(make_auth_api_register_controller("my_app").contains("INSERT INTO users"));
+    }
+    // arc_15. regression: no Japanese text
+    #[test]
+    fn arc_15_no_japanese_text() {
+        let out = make_auth_api_register_controller("my_app");
+        assert!(!out.chars().any(|c| ('\u{3040}'..='\u{30FF}').contains(&c)
+            || ('\u{4E00}'..='\u{9FFF}').contains(&c)));
+    }
+
+    // ── make_auth_dashboard_controller (8) ────────────────────────────────────
+
+    // dc_01. regression: #[path] banned
+    #[test]
+    fn dc_01_no_path_attribute() {
+        assert!(!make_auth_dashboard_controller("my_app").contains("#[path"));
+    }
+    // dc_02. behavior: uses AuthUser not Session
+    #[test]
+    fn dc_02_uses_auth_user_extractor() {
+        let out = make_auth_dashboard_controller("my_app");
+        assert!(out.contains("AuthUser") && !out.contains("session."));
+    }
+    // dc_03. behavior: no DB access needed
+    #[test]
+    fn dc_03_no_db_access() {
+        assert!(!make_auth_dashboard_controller("my_app").contains("sqlx"));
+    }
+    // dc_04. behavior: correct view name "dashboard"
+    #[test]
+    fn dc_04_renders_dashboard_view() {
+        assert!(make_auth_dashboard_controller("my_app").contains("\"dashboard\""));
+    }
+    // dc_05. behavior: passes user_id from auth.id
+    #[test]
+    fn dc_05_passes_user_id_from_auth() {
+        assert!(make_auth_dashboard_controller("my_app").contains("user_id => auth.id"));
+    }
+    // dc_06. behavior: returns Result<impl IntoResponse, AppError>
+    #[test]
+    fn dc_06_returns_result() {
+        assert!(make_auth_dashboard_controller("my_app").contains("Result<impl IntoResponse, AppError>"));
+    }
+    // dc_07. security: no session mutation
+    #[test]
+    fn dc_07_no_session_calls() {
+        assert!(!make_auth_dashboard_controller("my_app").contains("session."));
+    }
+    // dc_08. regression: no Japanese text
+    #[test]
+    fn dc_08_no_japanese_text() {
+        let out = make_auth_dashboard_controller("my_app");
+        assert!(!out.chars().any(|c| ('\u{3040}'..='\u{30FF}').contains(&c)
+            || ('\u{4E00}'..='\u{9FFF}').contains(&c)));
+    }
+
+    // ── view_auth_login (10) ──────────────────────────────────────────────────
+
+    // vl_01. regression: form action must be /login not /register
+    #[test]
+    fn vl_01_form_action_is_login() {
+        let out = view_auth_login();
+        assert!(out.contains("action=\"/login\"") && !out.contains("action=\"/register\""));
+    }
+    // vl_02. regression: login form has no name field
+    #[test]
+    fn vl_02_no_name_field() {
+        assert!(!view_auth_login().contains("name=\"name\""));
+    }
+    // vl_03. regression: correct autocomplete for password
+    #[test]
+    fn vl_03_autocomplete_current_password() {
+        let out = view_auth_login();
+        assert!(out.contains("autocomplete=\"current-password\"")
+            && !out.contains("autocomplete=\"new-password\""));
+    }
+    // vl_04. behavior: old_email preserved as value attribute
+    #[test]
+    fn vl_04_old_email_as_value_attribute() {
+        assert!(view_auth_login().contains("value=\"{{ old_email }}\""));
+    }
+    // vl_05. behavior: flash_error conditionally shown
+    #[test]
+    fn vl_05_flash_error_conditional() {
+        assert!(view_auth_login().contains("{% if flash_error %}"));
+    }
+    // vl_06. behavior: password input type is password not text
+    #[test]
+    fn vl_06_password_type_is_password() {
+        assert!(view_auth_login().contains("type=\"password\""));
+    }
+    // vl_07. behavior: email input name attribute
+    #[test]
+    fn vl_07_email_input_name() {
+        assert!(view_auth_login().contains("name=\"email\""));
+    }
+    // vl_08. behavior: password input name attribute
+    #[test]
+    fn vl_08_password_input_name() {
+        assert!(view_auth_login().contains("name=\"password\""));
+    }
+    // vl_09. behavior: link to register page
+    #[test]
+    fn vl_09_link_to_register() {
+        assert!(view_auth_login().contains("/register"));
+    }
+    // vl_10. behavior: extends correct layout
+    #[test]
+    fn vl_10_extends_layouts_app() {
+        assert!(view_auth_login().contains("{% extends \"layouts.app\" %}"));
+    }
+
+    // ── view_auth_register (12) ───────────────────────────────────────────────
+
+    // vr_01. regression: form action must be /register not /login
+    #[test]
+    fn vr_01_form_action_is_register() {
+        let out = view_auth_register();
+        assert!(out.contains("action=\"/register\"") && !out.contains("action=\"/login\""));
+    }
+    // vr_02. regression: correct autocomplete for password
+    #[test]
+    fn vr_02_autocomplete_new_password() {
+        let out = view_auth_register();
+        assert!(out.contains("autocomplete=\"new-password\"")
+            && !out.contains("autocomplete=\"current-password\""));
+    }
+    // vr_03. behavior: old_name preserved
+    #[test]
+    fn vr_03_old_name_value_attribute() {
+        assert!(view_auth_register().contains("value=\"{{ old_name }}\""));
+    }
+    // vr_04. behavior: old_email preserved
+    #[test]
+    fn vr_04_old_email_value_attribute() {
+        assert!(view_auth_register().contains("value=\"{{ old_email }}\""));
+    }
+    // vr_05. behavior: flash_error conditionally shown
+    #[test]
+    fn vr_05_flash_error_conditional() {
+        assert!(view_auth_register().contains("{% if flash_error %}"));
+    }
+    // vr_06. behavior: name input exists
+    #[test]
+    fn vr_06_name_input_present() {
+        assert!(view_auth_register().contains("name=\"name\""));
+    }
+    // vr_07. behavior: email input exists
+    #[test]
+    fn vr_07_email_input_present() {
+        assert!(view_auth_register().contains("name=\"email\""));
+    }
+    // vr_08. behavior: password input exists
+    #[test]
+    fn vr_08_password_input_present() {
+        assert!(view_auth_register().contains("name=\"password\""));
+    }
+    // vr_09. behavior: password input type is password
+    #[test]
+    fn vr_09_password_type_is_password() {
+        assert!(view_auth_register().contains("type=\"password\""));
+    }
+    // vr_10. behavior: link back to login
+    #[test]
+    fn vr_10_link_to_login() {
+        assert!(view_auth_register().contains("/login"));
+    }
+    // vr_11. behavior: extends correct layout
+    #[test]
+    fn vr_11_extends_layouts_app() {
+        assert!(view_auth_register().contains("{% extends \"layouts.app\" %}"));
+    }
+    // vr_12. behavior: old values rendered as value= attributes (input pre-fill)
+    #[test]
+    fn vr_12_old_values_as_value_attributes() {
+        let out = view_auth_register();
+        assert!(out.contains("value=\"{{ old_name }}\"") || out.contains("value=\"{{ old_email }}\""));
+    }
+
+    // ── view_auth_dashboard (5) ───────────────────────────────────────────────
+
+    // vd_01. regression: logout form action must be /logout
+    #[test]
+    fn vd_01_logout_form_action_is_logout() {
+        let out = view_auth_dashboard();
+        assert!(out.contains("action=\"/logout\"")
+            && !out.contains("action=\"/login\"")
+            && !out.contains("action=\"/dashboard\""));
+    }
+    // vd_02. behavior: user_id is displayed
+    #[test]
+    fn vd_02_displays_user_id() {
+        assert!(view_auth_dashboard().contains("{{ user_id }}"));
+    }
+    // vd_03. behavior: logout uses POST method
+    #[test]
+    fn vd_03_logout_uses_post() {
+        let out = view_auth_dashboard();
+        let logout_pos = out.find("/logout").unwrap();
+        let surrounding = &out[logout_pos.saturating_sub(60)..logout_pos + 10];
+        assert!(surrounding.contains("POST") || out.contains("method=\"POST\""));
+    }
+    // vd_04. behavior: logout is a button not a link
+    #[test]
+    fn vd_04_logout_is_submit_button() {
+        assert!(view_auth_dashboard().contains("<button type=\"submit\">"));
+    }
+    // vd_05. behavior: extends correct layout
+    #[test]
+    fn vd_05_extends_layouts_app() {
+        assert!(view_auth_dashboard().contains("{% extends \"layouts.app\" %}"));
+    }
+
+    // ── user_model_rs (10) ────────────────────────────────────────────────────
+
+    // um_01. security: password field has skip_serializing
+    #[test]
+    fn um_01_password_has_skip_serializing() {
+        assert!(user_model_rs().contains("#[serde(skip_serializing)]"));
+    }
+    // um_02. security: password field exists for DB reads
+    #[test]
+    fn um_02_password_field_exists() {
+        assert!(user_model_rs().contains("pub password: String"));
+    }
+    // um_03. behavior: find_by_email uses parameterized query
+    #[test]
+    fn um_03_find_by_email_uses_parameter() {
+        assert!(user_model_rs().contains("$1"));
+    }
+    // um_04. behavior: find_by_email returns single result
+    #[test]
+    fn um_04_find_by_email_limits_to_one() {
+        let out = user_model_rs();
+        assert!(out.contains("LIMIT 1") || out.contains("fetch_optional"));
+    }
+    // um_05. behavior: id field type
+    #[test]
+    fn um_05_id_is_i32() {
+        assert!(user_model_rs().contains("pub id: i32"));
+    }
+    // um_06. behavior: created_at field type
+    #[test]
+    fn um_06_created_at_is_datetime_utc() {
+        assert!(user_model_rs().contains("DateTime<Utc>"));
+    }
+    // um_07. behavior: derives FromRow for sqlx
+    #[test]
+    fn um_07_derives_from_row() {
+        assert!(user_model_rs().contains("FromRow"));
+    }
+    // um_08. behavior: derives Serialize (password skipped, rest serialized)
+    #[test]
+    fn um_08_derives_serialize() {
+        assert!(user_model_rs().contains("Serialize"));
+    }
+    // um_09. behavior: find_by_email returns Option
+    #[test]
+    fn um_09_find_by_email_returns_option() {
+        assert!(user_model_rs().contains("Result<Option<Self>, sqlx::Error>"));
+    }
+    // um_10. behavior: WHERE clause filters by email
+    #[test]
+    fn um_10_where_clause_filters_by_email() {
+        assert!(user_model_rs().contains("WHERE email"));
+    }
+
+    // ── user_controller (10) ──────────────────────────────────────────────────
+
+    // uc_01. behavior: cache key is consistent between remember and forget
+    #[test]
+    fn uc_01_cache_key_consistent() {
+        let out = user_controller("my_app");
+        assert!(out.contains("Cache::remember") && out.contains("Cache::forget"));
+        assert!(out.matches("\"users.all\"").count() >= 2);
+    }
+    // uc_02. behavior: cache TTL is 60 seconds
+    #[test]
+    fn uc_02_cache_ttl_60_seconds() {
+        assert!(user_controller("my_app").contains("Duration::from_secs(60)"));
+    }
+    // uc_03. behavior: store() returns 201 CREATED not 200
+    #[test]
+    fn uc_03_store_returns_created() {
+        assert!(user_controller("my_app").contains("StatusCode::CREATED"));
+    }
+    // uc_04. behavior: email duplicate uses specific constraint name
+    #[test]
+    fn uc_04_email_duplicate_uses_constraint_name() {
+        assert!(user_controller("my_app").contains("users_email_key"));
+    }
+    // uc_05. behavior: email duplicate returns Conflict with message
+    #[test]
+    fn uc_05_email_duplicate_is_conflict() {
+        assert!(user_controller("my_app").contains("AppError::Conflict(\"Email already taken.\""));
+    }
+    // uc_06. behavior: mock function has no DB or cache access
+    #[test]
+    fn uc_06_mock_has_no_db_or_cache() {
+        let out = user_controller("my_app");
+        let mock_pos = out.find("pub async fn mock(").unwrap();
+        let mock_body = &out[mock_pos..];
+        assert!(!mock_body.contains("sqlx::query") && !mock_body.contains("Cache::"));
+    }
+    // uc_07. behavior: mock returns static sample data
+    #[test]
+    fn uc_07_mock_has_static_sample_data() {
+        let out = user_controller("my_app");
+        assert!(out.contains("Alice") || out.contains("Bob") || out.contains("Carol"));
+    }
+    // uc_08. regression: StoreUserRequest validates password length
+    #[test]
+    fn uc_08_password_validate_min_length() {
+        assert!(user_controller("my_app").contains("#[validate(length(min = 8"));
+    }
+    // uc_09. regression: StoreUserRequest validates email format
+    #[test]
+    fn uc_09_email_validate_format() {
+        assert!(user_controller("my_app").contains("#[validate(email"));
+    }
+    // uc_10. regression: user_controller has no destroy function
+    #[test]
+    fn uc_10_no_destroy_function() {
+        assert!(!user_controller("my_app").contains("pub async fn destroy("));
+    }
+
+    // ── routes / bootstrap / main_rs (5) ─────────────────────────────────────
+
+    // misc_01. routes_api: auth routes absent (injected separately by make:auth --api)
+    #[test]
+    fn misc_01_routes_api_has_no_auth_routes() {
+        let out = routes_api("my_app");
+        assert!(!out.contains("\"/login\"") && !out.contains("\"/register\""));
+    }
+    // misc_02. routes_web: auth routes absent (injected separately by make:auth)
+    #[test]
+    fn misc_02_routes_web_has_no_auth_routes() {
+        let out = routes_web("my_app");
+        assert!(!out.contains("\"/login\"") && !out.contains("\"/register\""));
+    }
+    // misc_03. bootstrap_lib_rs: auth types re-exported
+    #[test]
+    fn misc_03_bootstrap_exports_auth_types() {
+        let out = bootstrap_lib_rs();
+        assert!(out.contains("Hash") && out.contains("Session") && out.contains("Auth") && out.contains("AuthUser"));
+    }
+    // misc_04. bootstrap_lib_rs: middleware re-exported
+    #[test]
+    fn misc_04_bootstrap_exports_middleware() {
+        let out = bootstrap_lib_rs();
+        assert!(out.contains("authenticate") && out.contains("session_middleware"));
+    }
+    // misc_05. main_rs: binds to 0.0.0.0 not 127.0.0.1
+    #[test]
+    fn misc_05_main_binds_to_all_interfaces() {
+        let out = main_rs("my_app");
+        assert!(out.contains("0.0.0.0:3000") && !out.contains("127.0.0.1:3000"));
+    }
 }
