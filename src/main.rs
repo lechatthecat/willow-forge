@@ -6,7 +6,7 @@ use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "willow-forge")]
-#[command(about = "Willow Forge - Laravel-like web framework for Rust", long_about = None)]
+#[command(about = "Willow Forge - web framework for Rust", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

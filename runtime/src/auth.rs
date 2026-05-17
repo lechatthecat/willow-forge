@@ -2,7 +2,7 @@ use crate::session::Session;
 
 const AUTH_ID_KEY: &str = "auth.user.id";
 
-/// Laravel-like Auth facade for session-based authentication.
+/// Auth facade for session-based authentication.
 ///
 /// All methods operate on a `&Session` extractor parameter.
 ///

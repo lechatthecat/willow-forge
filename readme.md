@@ -579,17 +579,50 @@ Sessions are stored in Redis under `session:{id}` with a configurable TTL (defau
 
 #### Route protection
 
-Use `Session` + `Auth::check` in middleware, or add `AuthUser` extractor to require auth:
+Two approaches are available.
+
+**Option 1 — `AuthUser` extractor (single route)**
+
+Add `AuthUser` as a parameter to any controller function. Unauthenticated requests are rejected automatically before the handler runs.
 
 ```rust
 use my_app::AuthUser;
 
-pub async fn dashboard(auth: AuthUser) -> impl IntoResponse {
+pub async fn dashboard(auth: AuthUser, ctx: Context) -> impl IntoResponse {
+    // auth.id is the logged-in user's ID
     Json(json!({ "user_id": auth.id }))
 }
 ```
 
-`AuthUser` returns 302 → `/login` for browser requests and 401 JSON for API/AJAX requests.
+**Option 2 — `authenticate` middleware (route group)**
+
+Use `axum::middleware::from_fn(authenticate)` on a sub-router to protect multiple routes at once. Keep public routes (login, register) in a separate router to avoid redirect loops.
+
+```rust
+// src/routes/web.rs
+use axum::{middleware, routing::{get, post}, Router};
+use std::sync::Arc;
+use my_app::{AppState, authenticate};
+
+pub fn routes() -> Router<Arc<AppState>> {
+    let protected = Router::new()
+        .route("/dashboard", get(DashboardController::index))
+        .route("/logout",    post(LoginController::destroy))
+        .layer(middleware::from_fn(authenticate)); // unauthenticated → 302 /login
+
+    let public = Router::new()
+        .route("/login",    get(LoginController::show).post(LoginController::store))
+        .route("/register", get(RegisterController::show).post(RegisterController::store));
+
+    Router::new()
+        .merge(protected)
+        .merge(public)
+}
+```
+
+> **Important:** never add `authenticate` to `/login` or `/register` — it causes an infinite redirect loop.
+
+`AuthUser` and `authenticate` both return 302 → `/login` for browser requests and 401 JSON for `/api/*` or `Accept: application/json` requests.
 
 ### JWT-based auth — `make:auth --api`
 

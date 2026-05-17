@@ -1,4 +1,4 @@
-//! Laravel-like Cache facade backed by Redis.
+//! Cache facade backed by Redis.
 //!
 //! All methods take `&Context` as their first argument to access the cache Redis pool.
 //! Values are serialized as JSON, so any `Serialize + DeserializeOwned` type is supported.

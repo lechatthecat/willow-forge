@@ -8,7 +8,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-willow-forge-runtime = {{ path = "/home/shu/Documents/willow/runtime" }}
+willow-forge-runtime = {{ git = "https://github.com/lechatthecat/willow.git" }}
 axum = "0.8.9"
 tokio = {{ version = "1", features = ["full"] }}
 tower = "0.5.3"
@@ -220,13 +220,19 @@ use std::sync::Arc;
 
 use {name}::AppState;
 
-/// Equivalent to Laravel's `$request->expectsJson()`.
+/// Returns true if the client expects a JSON response.
 ///
-/// Returns true if:
-/// - Accept header contains `application/json`, `/json`, or `+json`  (wantsJson)
+/// Checks:
+/// - Path starts with `/api/` (API routes always return JSON)
+/// - OR Accept header contains `application/json`, `/json`, or `+json`
 /// - OR Content-Type: application/json (client is sending JSON → expects JSON back)
 /// - OR the request is an AJAX call (X-Requested-With: XMLHttpRequest) with Accept: */* or absent
 fn expects_json(request: &Request) -> bool {{
+    // API routes always return JSON regardless of Accept header
+    if request.uri().path().starts_with("/api/") {{
+        return true;
+    }}
+
     let accept = request
         .headers()
         .get(axum::http::header::ACCEPT)
@@ -264,14 +270,14 @@ fn expects_json(request: &Request) -> bool {{
 ///
 /// How it works:
 /// - Runs on every response (as the outermost layer in main.rs)
-/// - If `expects_json()` is true (Laravel-equivalent), passes through as-is
+/// - If `expects_json()` is true, passes through as-is
 /// - Otherwise, if the status is 4xx/5xx, looks for resources/views/errors/{{code}}.jinja.html
 /// - If found, replaces the response with the rendered HTML view
 /// - If not found, passes through the original response unchanged
 ///
 /// To add a custom error view, create resources/views/errors/404.jinja.html etc.
 /// To add shared logic (logging, alerting), add it inside this function.
-/// To force JSON for specific paths (like Laravel's shouldRenderJsonWhen), modify expects_json().
+/// To force JSON for specific paths, modify expects_json().
 pub async fn render(
     State(state): State<Arc<AppState>>,
     request: Request,
@@ -676,6 +682,7 @@ pub fn view_layout_app() -> &'static str {
         .alert { padding: 0.75rem 1rem; border-radius: 4px; margin-bottom: 1rem; font-size: 0.9rem; }
         .alert-error { background: #f8d7da; color: #58151c; border: 1px solid #f1aeb5; }
         .alert-success { background: #d1e7dd; color: #0a3622; border: 1px solid #a3cfbb; }
+        .link-button { background: none; border: none; padding: 0; color: inherit; font: inherit; cursor: pointer; text-decoration: underline; }
     </style>
 </head>
 <body>
@@ -742,9 +749,10 @@ pub fn view_welcome() -> &'static str {
     <tbody>
         <tr><td><code>GET</code></td><td><code><a href="/login">/login</a></code></td><td>Login form</td></tr>
         <tr><td><code>POST</code></td><td><code>/login</code></td><td>Submit login</td></tr>
-        <tr><td><code>POST</code></td><td><code>/logout</code></td><td>Logout</td></tr>
+        <tr><td><code>POST</code></td><td><form method="POST" action="/logout" style="display:inline;margin:0"><button type="submit" class="link-button"><code>/logout</code></button></form></td><td>Logout</td></tr>
         <tr><td><code>GET</code></td><td><code><a href="/register">/register</a></code></td><td>Registration form</td></tr>
         <tr><td><code>POST</code></td><td><code>/register</code></td><td>Submit registration</td></tr>
+        <tr><td><code>GET</code></td><td><code><a href="/dashboard">/dashboard</a></code></td><td>Protected dashboard (requires login)</td></tr>
     </tbody>
 </table>
 
@@ -776,6 +784,43 @@ pub fn view_welcome() -> &'static str {
 <pre><code>curl -s -X POST http://localhost:3000/api/users \
   -H "Content-Type: application/json" \
   -d 'invalid' | jq</code></pre>
+
+<h2>JWT API Auth (after <code>willow-forge make:auth --api</code>)</h2>
+<p>Scaffold JWT-based auth (login, refresh, logout, register — JSON only, no views):</p>
+<pre><code>willow-forge make:auth --api</code></pre>
+<p>Routes injected into <code>src/routes/api.rs</code>. Restart the server to activate them.</p>
+<table>
+    <thead>
+        <tr><th>Method</th><th>URL</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+        <tr><td><code>POST</code></td><td><code>/api/auth/register</code></td><td>Create account, returns JWT</td></tr>
+        <tr><td><code>POST</code></td><td><code>/api/auth/login</code></td><td>Authenticate, returns JWT</td></tr>
+        <tr><td><code>POST</code></td><td><code>/api/auth/refresh</code></td><td>Rotate JWT (old token blacklisted)</td></tr>
+        <tr><td><code>POST</code></td><td><code>/api/auth/logout</code></td><td>Blacklist token, invalidate session</td></tr>
+        <tr><td><code>GET</code></td><td><code>/api/me</code></td><td>Current user info (requires JWT)</td></tr>
+    </tbody>
+</table>
+
+<h3>Register</h3>
+<pre><code>curl -s -X POST http://localhost:3000/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Alice","email":"alice@example.com","password":"secret123"}' | jq</code></pre>
+
+<h3>Login</h3>
+<pre><code>TOKEN=$(curl -s -X POST http://localhost:3000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"alice@example.com","password":"secret123"}' | jq -r '.token')
+echo $TOKEN</code></pre>
+
+<h3>Refresh</h3>
+<pre><code>NEW_TOKEN=$(curl -s -X POST http://localhost:3000/api/auth/refresh \
+  -H "Authorization: Bearer $TOKEN" | jq -r '.token')
+echo $NEW_TOKEN</code></pre>
+
+<h3>Logout</h3>
+<pre><code>curl -s -X POST http://localhost:3000/api/auth/logout \
+  -H "Authorization: Bearer $TOKEN" | jq</code></pre>
 
 <h2>Docker Hints</h2>
 <h3>Get inside a container</h3>
@@ -1087,13 +1132,18 @@ pub fn make_auth_login_controller(name: &str) -> String {
 }};
 
 use {name}::{{AppError, Auth, Context, Hash, Session, view}};
-use crate::app::Http::Requests::LoginRequest::LoginRequest;
+use crate::app::Http::Requests::login_request::LoginRequest;
 
 /// GET /login
 pub async fn show(ctx: Context, session: Session) -> Result<impl IntoResponse, AppError> {{
     let error: Option<String> = session.get("flash_error");
+    let old_email: Option<String> = session.get("flash_old_email");
     session.forget("flash_error");
-    Ok(view(&ctx, "auth.login", minijinja::context! {{ flash_error => error }})?)
+    session.forget("flash_old_email");
+    Ok(view(&ctx, "auth.login", minijinja::context! {{
+        flash_error => error,
+        old_email => old_email.unwrap_or_default(),
+    }})?)
 }}
 
 /// POST /login
@@ -1110,6 +1160,7 @@ pub async fn store(
             .find_map(|e| e.message.clone())
             .unwrap_or_else(|| "Invalid input.".into());
         session.put("flash_error", msg.as_ref());
+        session.put("flash_old_email", req.email.as_str());
         return Redirect::to("/login").into_response();
     }}
 
@@ -1121,6 +1172,7 @@ pub async fn store(
         }}
         _ => {{
             session.put("flash_error", "Invalid email or password.");
+            session.put("flash_old_email", req.email.as_str());
             Redirect::to("/login").into_response()
         }}
     }}
@@ -1144,13 +1196,21 @@ pub fn make_auth_register_controller(name: &str) -> String {
 }};
 
 use {name}::{{AppError, Auth, Context, Hash, Session, view}};
-use crate::app::Http::Requests::RegisterRequest::RegisterRequest;
+use crate::app::Http::Requests::register_request::RegisterRequest;
 
 /// GET /register
 pub async fn show(ctx: Context, session: Session) -> Result<impl IntoResponse, AppError> {{
     let error: Option<String> = session.get("flash_error");
+    let old_name: Option<String> = session.get("flash_old_name");
+    let old_email: Option<String> = session.get("flash_old_email");
     session.forget("flash_error");
-    Ok(view(&ctx, "auth.register", minijinja::context! {{ flash_error => error }})?)
+    session.forget("flash_old_name");
+    session.forget("flash_old_email");
+    Ok(view(&ctx, "auth.register", minijinja::context! {{
+        flash_error => error,
+        old_name => old_name.unwrap_or_default(),
+        old_email => old_email.unwrap_or_default(),
+    }})?)
 }}
 
 /// POST /register
@@ -1167,6 +1227,8 @@ pub async fn store(
             .find_map(|e| e.message.clone())
             .unwrap_or_else(|| "Invalid input.".into());
         session.put("flash_error", msg.as_ref());
+        session.put("flash_old_name", req.name.as_str());
+        session.put("flash_old_email", req.email.as_str());
         return Redirect::to("/register").into_response();
     }}
 
@@ -1174,6 +1236,8 @@ pub async fn store(
         Ok(h) => h,
         Err(_) => {{
             session.put("flash_error", "An internal error occurred. Please try again.");
+            session.put("flash_old_name", req.name.as_str());
+            session.put("flash_old_email", req.email.as_str());
             return Redirect::to("/register").into_response();
         }}
     }};
@@ -1191,10 +1255,14 @@ pub async fn store(
         Ok(_) => Redirect::to("/login").into_response(),
         Err(sqlx::Error::Database(ref db)) if db.constraint() == Some("users_email_key") => {{
             session.put("flash_error", "That email address is already registered.");
+            session.put("flash_old_name", req.name.as_str());
+            session.put("flash_old_email", req.email.as_str());
             Redirect::to("/register").into_response()
         }}
         Err(_) => {{
             session.put("flash_error", "Registration failed. Please try again.");
+            session.put("flash_old_name", req.name.as_str());
+            session.put("flash_old_email", req.email.as_str());
             Redirect::to("/register").into_response()
         }}
     }}
@@ -1218,7 +1286,7 @@ pub fn view_auth_login() -> &'static str {
   <form method="POST" action="/login">
     <div>
       <label for="email">Email</label>
-      <input type="text" id="email" name="email" autocomplete="email">
+      <input type="text" id="email" name="email" autocomplete="email" value="{{ old_email }}">
     </div>
     <div>
       <label for="password">Password</label>
@@ -1248,11 +1316,11 @@ pub fn view_auth_register() -> &'static str {
   <form method="POST" action="/register">
     <div>
       <label for="name">Name</label>
-      <input type="text" id="name" name="name" required autocomplete="name">
+      <input type="text" id="name" name="name" required autocomplete="name" value="{{ old_name }}">
     </div>
     <div>
       <label for="email">Email</label>
-      <input type="text" id="email" name="email" autocomplete="email">
+      <input type="text" id="email" name="email" autocomplete="email" value="{{ old_email }}">
     </div>
     <div>
       <label for="password">Password</label>
@@ -1268,6 +1336,35 @@ pub fn view_auth_register() -> &'static str {
 "#
 }
 
+pub fn make_auth_dashboard_controller(name: &str) -> String {
+    format!(
+        r#"use axum::response::IntoResponse;
+use {name}::{{AppError, AuthUser, Context, view}};
+
+/// GET /dashboard — requires session login
+pub async fn index(auth: AuthUser, ctx: Context) -> Result<impl IntoResponse, AppError> {{
+    Ok(view(&ctx, "dashboard", minijinja::context! {{ user_id => auth.id }})?)
+}}
+"#,
+        name = name
+    )
+}
+
+pub fn view_auth_dashboard() -> &'static str {
+    r#"{% extends "layouts.app" %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<h1>Dashboard</h1>
+<p>Logged in as user ID: <strong>{{ user_id }}</strong></p>
+<form method="POST" action="/logout" style="margin-top:1rem">
+    <button type="submit">Logout</button>
+</form>
+{% endblock %}
+"#
+}
+
 pub fn auth_route_snippet() -> &'static str {
     r#"NOTE: make:auth injects routes automatically into src/routes/web.rs.
       Controllers use Form<T> and return redirects, not JSON.
@@ -1279,19 +1376,10 @@ pub fn make_auth_api_login_controller(name: &str) -> String {
     format!(
         r#"use axum::{{Json, http::HeaderMap, response::IntoResponse}};
 use chrono::Utc;
-use serde::Deserialize;
 use serde_json::json;
-use validator::Validate;
 
-use {name}::{{AppError, Context, Hash, Jwt, ValidatedJson}};
-
-#[derive(Debug, Deserialize, Validate)]
-pub struct LoginRequest {{
-    #[validate(email(message = "Must be a valid email address"))]
-    pub email: String,
-    #[validate(length(min = 1, message = "Password is required"))]
-    pub password: String,
-}}
+use {name}::{{AppError, Context, Hash, Jwt, JwtUser, ValidatedJson}};
+use crate::app::Http::Requests::login_request::LoginRequest;
 
 /// POST /api/auth/login
 pub async fn store(
@@ -1314,6 +1402,29 @@ pub async fn store(
     }})))
 }}
 
+/// POST /api/auth/refresh
+pub async fn refresh(
+    ctx: Context,
+    auth: JwtUser,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, AppError> {{
+    let token = headers
+        .get("Authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "));
+
+    if let Some(token) = token {{
+        if let Ok(claims) = Jwt::decode(token) {{
+            let now = Utc::now().timestamp() as usize;
+            let remaining = claims.exp.saturating_sub(now) as u64;
+            Jwt::blacklist(&claims.jti, remaining, &ctx.state.services.redis).await?;
+        }}
+    }}
+
+    let new_token = Jwt::encode(auth.id)?;
+    Ok(Json(json!({{"token": new_token}})))
+}}
+
 /// POST /api/auth/logout
 pub async fn destroy(
     ctx: Context,
@@ -1334,6 +1445,11 @@ pub async fn destroy(
 
     Ok(Json(json!({{"message": "Logged out"}})))
 }}
+
+/// GET /api/me — returns the authenticated user's ID
+pub async fn me(auth: JwtUser) -> impl IntoResponse {{
+    Json(json!({{"user_id": auth.id}}))
+}}
 "#,
         name = name
     )
@@ -1342,21 +1458,10 @@ pub async fn destroy(
 pub fn make_auth_api_register_controller(name: &str) -> String {
     format!(
         r#"use axum::{{Json, response::IntoResponse, http::StatusCode}};
-use serde::Deserialize;
 use serde_json::json;
-use validator::Validate;
 
 use {name}::{{AppError, Context, Hash, Jwt, ValidatedJson}};
-
-#[derive(Debug, Deserialize, Validate)]
-pub struct RegisterRequest {{
-    #[validate(length(min = 1, max = 255, message = "Name is required"))]
-    pub name: String,
-    #[validate(email(message = "Must be a valid email address"))]
-    pub email: String,
-    #[validate(length(min = 8, message = "Password must be at least 8 characters"))]
-    pub password: String,
-}}
+use crate::app::Http::Requests::register_request::RegisterRequest;
 
 /// POST /api/auth/register
 pub async fn store(
@@ -1689,5 +1794,873 @@ mod tests {
         let out = user_controller("my_app");
         assert!(out.contains("use my_app::{AppError, Cache, Context, ValidatedJson}"));
         assert!(out.contains("Result<impl IntoResponse, AppError>"));
+    }
+
+    // --- auth template regression tests ---
+
+    // Bug: web LoginController used wrong module path (LoginRequest::LoginRequest)
+    #[test]
+    fn web_login_controller_imports_snake_case_module() {
+        let out = make_auth_login_controller("my_app");
+        assert!(out.contains("login_request::LoginRequest"),
+            "must import from login_request:: (snake_case module name)");
+        assert!(!out.contains("LoginRequest::LoginRequest"),
+            "must not use PascalCase module path");
+    }
+
+    // Bug: web RegisterController used wrong module path (RegisterRequest::RegisterRequest)
+    #[test]
+    fn web_register_controller_imports_snake_case_module() {
+        let out = make_auth_register_controller("my_app");
+        assert!(out.contains("register_request::RegisterRequest"),
+            "must import from register_request:: (snake_case module name)");
+        assert!(!out.contains("RegisterRequest::RegisterRequest"),
+            "must not use PascalCase module path");
+    }
+
+    // Bug: web LoginController was missing `show` (API version was generated instead)
+    #[test]
+    fn web_login_controller_has_show_function() {
+        let out = make_auth_login_controller("my_app");
+        assert!(out.contains("pub async fn show("),
+            "web LoginController must have show() for GET /login");
+    }
+
+    // Bug: web RegisterController was missing `show`
+    #[test]
+    fn web_register_controller_has_show_function() {
+        let out = make_auth_register_controller("my_app");
+        assert!(out.contains("pub async fn show("),
+            "web RegisterController must have show() for GET /register");
+    }
+
+    // Bug: API login controller defined LoginRequest inline instead of importing it
+    #[test]
+    fn api_login_controller_imports_login_request_not_inline() {
+        let out = make_auth_api_login_controller("my_app");
+        assert!(out.contains("login_request::LoginRequest"),
+            "must import LoginRequest from login_request module");
+        assert!(!out.contains("struct LoginRequest"),
+            "must not define LoginRequest struct inline");
+    }
+
+    // Bug: API register controller defined RegisterRequest inline instead of importing it
+    #[test]
+    fn api_register_controller_imports_register_request_not_inline() {
+        let out = make_auth_api_register_controller("my_app");
+        assert!(out.contains("register_request::RegisterRequest"),
+            "must import RegisterRequest from register_request module");
+        assert!(!out.contains("struct RegisterRequest"),
+            "must not define RegisterRequest struct inline");
+    }
+
+    // Bug: API login controller was missing refresh endpoint
+    #[test]
+    fn api_login_controller_has_refresh_function() {
+        let out = make_auth_api_login_controller("my_app");
+        assert!(out.contains("pub async fn refresh("),
+            "ApiLoginController must have refresh() for POST /api/auth/refresh");
+        assert!(out.contains("JwtUser"),
+            "refresh() must accept JwtUser extractor");
+    }
+
+    // Bug: API login controller was missing logout endpoint
+    #[test]
+    fn api_login_controller_has_destroy_function() {
+        let out = make_auth_api_login_controller("my_app");
+        assert!(out.contains("pub async fn destroy("),
+            "ApiLoginController must have destroy() for POST /api/auth/logout");
+    }
+
+    // Invariant: no template may use #[path] — it is permanently banned
+    #[test]
+    fn no_template_uses_path_attribute() {
+        let cases: &[(&str, &str)] = &[
+            ("make_auth_login_controller", &make_auth_login_controller("my_app")),
+            ("make_auth_register_controller", &make_auth_register_controller("my_app")),
+            ("make_auth_api_login_controller", &make_auth_api_login_controller("my_app")),
+            ("make_auth_api_register_controller", &make_auth_api_register_controller("my_app")),
+        ];
+        for (label, out) in cases {
+            assert!(!out.contains("#[path"),
+                "{label}: must not contain #[path] attribute");
+        }
+    }
+
+    // Invariant: login request has both email and password fields
+    #[test]
+    fn login_request_has_required_fields() {
+        let out = make_auth_login_request();
+        assert!(out.contains("pub email: String"));
+        assert!(out.contains("pub password: String"));
+        assert!(out.contains("#[derive") && out.contains("Validate"));
+    }
+
+    // Invariant: register request has name, email, password
+    #[test]
+    fn register_request_has_required_fields() {
+        let out = make_auth_register_request();
+        assert!(out.contains("pub name: String"));
+        assert!(out.contains("pub email: String"));
+        assert!(out.contains("pub password: String"));
+        assert!(out.contains("#[derive") && out.contains("Validate"));
+    }
+
+    // ── API login controller (50) ──────────────────────────────────────────────
+
+    // api_01. has store function
+    #[test]
+    fn api_01_has_store_fn() {
+        assert!(make_auth_api_login_controller("my_app").contains("pub async fn store("));
+    }
+    // api_02. has refresh function
+    #[test]
+    fn api_02_has_refresh_fn() {
+        assert!(make_auth_api_login_controller("my_app").contains("pub async fn refresh("));
+    }
+    // api_03. has destroy function
+    #[test]
+    fn api_03_has_destroy_fn() {
+        assert!(make_auth_api_login_controller("my_app").contains("pub async fn destroy("));
+    }
+    // api_04. has me function
+    #[test]
+    fn api_04_has_me_fn() {
+        assert!(make_auth_api_login_controller("my_app").contains("pub async fn me("));
+    }
+    // api_05. imports LoginRequest from snake_case module
+    #[test]
+    fn api_05_imports_login_request_snake_case() {
+        let out = make_auth_api_login_controller("my_app");
+        assert!(out.contains("login_request::LoginRequest"));
+        assert!(!out.contains("LoginRequest::LoginRequest"));
+    }
+    // api_06. imports AppError
+    #[test]
+    fn api_06_imports_app_error() {
+        assert!(make_auth_api_login_controller("my_app").contains("AppError"));
+    }
+    // api_07. imports Context
+    #[test]
+    fn api_07_imports_context() {
+        assert!(make_auth_api_login_controller("my_app").contains("Context"));
+    }
+    // api_08. imports Hash
+    #[test]
+    fn api_08_imports_hash() {
+        assert!(make_auth_api_login_controller("my_app").contains("Hash"));
+    }
+    // api_09. imports Jwt
+    #[test]
+    fn api_09_imports_jwt() {
+        assert!(make_auth_api_login_controller("my_app").contains("Jwt"));
+    }
+    // api_10. imports JwtUser
+    #[test]
+    fn api_10_imports_jwt_user() {
+        assert!(make_auth_api_login_controller("my_app").contains("JwtUser"));
+    }
+    // api_11. imports ValidatedJson
+    #[test]
+    fn api_11_imports_validated_json() {
+        assert!(make_auth_api_login_controller("my_app").contains("ValidatedJson"));
+    }
+    // api_12. no #[path] attribute
+    #[test]
+    fn api_12_no_path_attribute() {
+        assert!(!make_auth_api_login_controller("my_app").contains("#[path"));
+    }
+    // api_13. no inline struct LoginRequest
+    #[test]
+    fn api_13_no_inline_login_request_struct() {
+        assert!(!make_auth_api_login_controller("my_app").contains("struct LoginRequest"));
+    }
+    // api_14. store accepts ValidatedJson<LoginRequest>
+    #[test]
+    fn api_14_store_accepts_validated_json() {
+        assert!(make_auth_api_login_controller("my_app").contains("ValidatedJson(req): ValidatedJson<LoginRequest>"));
+    }
+    // api_15. store returns Result<impl IntoResponse, AppError>
+    #[test]
+    fn api_15_store_returns_result() {
+        assert!(make_auth_api_login_controller("my_app").contains("Result<impl IntoResponse, AppError>"));
+    }
+    // api_16. store uses find_by_email
+    #[test]
+    fn api_16_store_uses_find_by_email() {
+        assert!(make_auth_api_login_controller("my_app").contains("find_by_email"));
+    }
+    // api_17. store uses Hash::check
+    #[test]
+    fn api_17_store_uses_hash_check() {
+        assert!(make_auth_api_login_controller("my_app").contains("Hash::check"));
+    }
+    // api_18. store uses Jwt::encode
+    #[test]
+    fn api_18_store_uses_jwt_encode() {
+        assert!(make_auth_api_login_controller("my_app").contains("Jwt::encode"));
+    }
+    // api_19. store returns 401 on wrong password
+    #[test]
+    fn api_19_store_returns_unauthorized_on_wrong_password() {
+        let out = make_auth_api_login_controller("my_app");
+        assert!(out.contains("AppError::Unauthorized"));
+    }
+    // api_20. store returns 401 when user not found
+    #[test]
+    fn api_20_store_returns_unauthorized_user_not_found() {
+        assert!(make_auth_api_login_controller("my_app").contains("ok_or(AppError::Unauthorized)"));
+    }
+    // api_21. store response includes token field
+    #[test]
+    fn api_21_store_response_has_token() {
+        assert!(make_auth_api_login_controller("my_app").contains("\"token\""));
+    }
+    // api_22. store response includes user object
+    #[test]
+    fn api_22_store_response_has_user() {
+        assert!(make_auth_api_login_controller("my_app").contains("\"user\""));
+    }
+    // api_23. store response includes user.id
+    #[test]
+    fn api_23_store_response_has_user_id() {
+        assert!(make_auth_api_login_controller("my_app").contains("user.id"));
+    }
+    // api_24. store response includes user.name
+    #[test]
+    fn api_24_store_response_has_user_name() {
+        assert!(make_auth_api_login_controller("my_app").contains("user.name"));
+    }
+    // api_25. store response includes user.email
+    #[test]
+    fn api_25_store_response_has_user_email() {
+        assert!(make_auth_api_login_controller("my_app").contains("user.email"));
+    }
+    // api_26. refresh accepts JwtUser extractor
+    #[test]
+    fn api_26_refresh_accepts_jwt_user() {
+        let out = make_auth_api_login_controller("my_app");
+        assert!(out.contains("auth: JwtUser"));
+    }
+    // api_27. refresh accepts HeaderMap
+    #[test]
+    fn api_27_refresh_accepts_header_map() {
+        assert!(make_auth_api_login_controller("my_app").contains("headers: HeaderMap"));
+    }
+    // api_28. refresh decodes existing token
+    #[test]
+    fn api_28_refresh_uses_jwt_decode() {
+        assert!(make_auth_api_login_controller("my_app").contains("Jwt::decode"));
+    }
+    // api_29. refresh blacklists old token
+    #[test]
+    fn api_29_refresh_uses_jwt_blacklist() {
+        assert!(make_auth_api_login_controller("my_app").contains("Jwt::blacklist"));
+    }
+    // api_30. refresh issues new token via Jwt::encode
+    #[test]
+    fn api_30_refresh_encodes_new_token() {
+        let out = make_auth_api_login_controller("my_app");
+        let encode_count = out.matches("Jwt::encode").count();
+        assert!(encode_count >= 2, "Jwt::encode must appear in both store and refresh");
+    }
+    // api_31. refresh response includes token field
+    #[test]
+    fn api_31_refresh_response_has_token() {
+        let out = make_auth_api_login_controller("my_app");
+        assert!(out.contains("new_token") || out.contains("\"token\""));
+    }
+    // api_32. refresh strips Bearer prefix
+    #[test]
+    fn api_32_refresh_strips_bearer_prefix() {
+        assert!(make_auth_api_login_controller("my_app").contains("Bearer "));
+    }
+    // api_33. refresh uses Utc::now for expiry calculation
+    #[test]
+    fn api_33_refresh_uses_utc_now() {
+        assert!(make_auth_api_login_controller("my_app").contains("Utc::now()"));
+    }
+    // api_34. refresh reads claims.exp
+    #[test]
+    fn api_34_refresh_reads_claims_exp() {
+        assert!(make_auth_api_login_controller("my_app").contains("claims.exp"));
+    }
+    // api_35. destroy accepts HeaderMap
+    #[test]
+    fn api_35_destroy_accepts_header_map() {
+        let out = make_auth_api_login_controller("my_app");
+        let destroy_pos = out.find("pub async fn destroy(").unwrap();
+        assert!(out[destroy_pos..].contains("HeaderMap"));
+    }
+    // api_36. destroy decodes token
+    #[test]
+    fn api_36_destroy_uses_jwt_decode() {
+        let out = make_auth_api_login_controller("my_app");
+        assert!(out.matches("Jwt::decode").count() >= 2, "both refresh and destroy must decode");
+    }
+    // api_37. destroy blacklists token
+    #[test]
+    fn api_37_destroy_uses_jwt_blacklist() {
+        let out = make_auth_api_login_controller("my_app");
+        assert!(out.matches("Jwt::blacklist").count() >= 2, "both refresh and destroy must blacklist");
+    }
+    // api_38. destroy strips Bearer prefix
+    #[test]
+    fn api_38_destroy_strips_bearer_prefix() {
+        let out = make_auth_api_login_controller("my_app");
+        assert!(out.matches("Bearer ").count() >= 2, "both refresh and destroy strip Bearer prefix");
+    }
+    // api_39. destroy returns Logged out message
+    #[test]
+    fn api_39_destroy_returns_logged_out() {
+        assert!(make_auth_api_login_controller("my_app").contains("Logged out"));
+    }
+    // api_40. me accepts JwtUser
+    #[test]
+    fn api_40_me_accepts_jwt_user() {
+        let out = make_auth_api_login_controller("my_app");
+        let me_pos = out.find("pub async fn me(").unwrap();
+        assert!(out[me_pos..].contains("JwtUser"));
+    }
+    // api_41. me returns user_id in JSON
+    #[test]
+    fn api_41_me_returns_user_id() {
+        assert!(make_auth_api_login_controller("my_app").contains("user_id"));
+    }
+    // api_42. me uses auth.id
+    #[test]
+    fn api_42_me_uses_auth_id() {
+        assert!(make_auth_api_login_controller("my_app").contains("auth.id"));
+    }
+    // api_43. imports from crate::app::Http::Requests::login_request
+    #[test]
+    fn api_43_imports_from_requests_module() {
+        assert!(make_auth_api_login_controller("my_app")
+            .contains("crate::app::Http::Requests::login_request"));
+    }
+    // api_44. uses provided crate name in runtime import
+    #[test]
+    fn api_44_uses_crate_name_in_import() {
+        let out = make_auth_api_login_controller("my_crate");
+        assert!(out.contains("use my_crate::"));
+    }
+    // api_45. imports HeaderMap from axum::http
+    #[test]
+    fn api_45_imports_header_map_from_axum() {
+        assert!(make_auth_api_login_controller("my_app").contains("HeaderMap"));
+    }
+    // api_46. imports Json from axum
+    #[test]
+    fn api_46_imports_json() {
+        assert!(make_auth_api_login_controller("my_app").contains("Json"));
+    }
+    // api_47. imports IntoResponse
+    #[test]
+    fn api_47_imports_into_response() {
+        assert!(make_auth_api_login_controller("my_app").contains("IntoResponse"));
+    }
+    // api_48. imports chrono Utc
+    #[test]
+    fn api_48_imports_chrono_utc() {
+        assert!(make_auth_api_login_controller("my_app").contains("chrono::Utc"));
+    }
+    // api_49. uses serde_json json! macro
+    #[test]
+    fn api_49_uses_json_macro() {
+        assert!(make_auth_api_login_controller("my_app").contains("json!"));
+    }
+    // api_50. no Japanese text
+    #[test]
+    fn api_50_no_japanese_text() {
+        let out = make_auth_api_login_controller("my_app");
+        assert!(!out.chars().any(|c| ('\u{3040}'..='\u{30FF}').contains(&c)
+            || ('\u{4E00}'..='\u{9FFF}').contains(&c)));
+    }
+
+    // ── web login controller (50) ──────────────────────────────────────────────
+
+    // web_01. has show function
+    #[test]
+    fn web_lc_01_has_show_fn() {
+        assert!(make_auth_login_controller("my_app").contains("pub async fn show("));
+    }
+    // web_02. has store function
+    #[test]
+    fn web_lc_02_has_store_fn() {
+        assert!(make_auth_login_controller("my_app").contains("pub async fn store("));
+    }
+    // web_03. has destroy function
+    #[test]
+    fn web_lc_03_has_destroy_fn() {
+        assert!(make_auth_login_controller("my_app").contains("pub async fn destroy("));
+    }
+    // web_04. imports LoginRequest from snake_case module
+    #[test]
+    fn web_lc_04_imports_login_request_snake_case() {
+        let out = make_auth_login_controller("my_app");
+        assert!(out.contains("login_request::LoginRequest"));
+        assert!(!out.contains("LoginRequest::LoginRequest"));
+    }
+    // web_05. imports AppError
+    #[test]
+    fn web_lc_05_imports_app_error() {
+        assert!(make_auth_login_controller("my_app").contains("AppError"));
+    }
+    // web_06. imports Auth
+    #[test]
+    fn web_lc_06_imports_auth() {
+        assert!(make_auth_login_controller("my_app").contains("Auth"));
+    }
+    // web_07. imports Context
+    #[test]
+    fn web_lc_07_imports_context() {
+        assert!(make_auth_login_controller("my_app").contains("Context"));
+    }
+    // web_08. imports Hash
+    #[test]
+    fn web_lc_08_imports_hash() {
+        assert!(make_auth_login_controller("my_app").contains("Hash"));
+    }
+    // web_09. imports Session
+    #[test]
+    fn web_lc_09_imports_session() {
+        assert!(make_auth_login_controller("my_app").contains("Session"));
+    }
+    // web_10. imports view
+    #[test]
+    fn web_lc_10_imports_view() {
+        assert!(make_auth_login_controller("my_app").contains("view"));
+    }
+    // web_11. no #[path] attribute
+    #[test]
+    fn web_lc_11_no_path_attribute() {
+        assert!(!make_auth_login_controller("my_app").contains("#[path"));
+    }
+    // web_12. no inline struct LoginRequest
+    #[test]
+    fn web_lc_12_no_inline_login_request_struct() {
+        assert!(!make_auth_login_controller("my_app").contains("struct LoginRequest"));
+    }
+    // web_13. show reads flash_error from session
+    #[test]
+    fn web_lc_13_show_reads_flash_error() {
+        let out = make_auth_login_controller("my_app");
+        let show_pos = out.find("pub async fn show(").unwrap();
+        assert!(out[show_pos..].contains("flash_error"));
+    }
+    // web_14. show reads flash_old_email from session
+    #[test]
+    fn web_lc_14_show_reads_flash_old_email() {
+        let out = make_auth_login_controller("my_app");
+        let show_pos = out.find("pub async fn show(").unwrap();
+        assert!(out[show_pos..].contains("flash_old_email"));
+    }
+    // web_15. show forgets flash_error
+    #[test]
+    fn web_lc_15_show_forgets_flash_error() {
+        let out = make_auth_login_controller("my_app");
+        let show_pos = out.find("pub async fn show(").unwrap();
+        let store_pos = out.find("pub async fn store(").unwrap();
+        let show_body = &out[show_pos..store_pos];
+        assert!(show_body.contains("forget(\"flash_error\")"));
+    }
+    // web_16. show forgets flash_old_email
+    #[test]
+    fn web_lc_16_show_forgets_flash_old_email() {
+        let out = make_auth_login_controller("my_app");
+        let show_pos = out.find("pub async fn show(").unwrap();
+        let store_pos = out.find("pub async fn store(").unwrap();
+        let show_body = &out[show_pos..store_pos];
+        assert!(show_body.contains("forget(\"flash_old_email\")"));
+    }
+    // web_17. show passes flash_error to template context
+    #[test]
+    fn web_lc_17_show_passes_flash_error_to_template() {
+        let out = make_auth_login_controller("my_app");
+        let show_pos = out.find("pub async fn show(").unwrap();
+        let store_pos = out.find("pub async fn store(").unwrap();
+        assert!(out[show_pos..store_pos].contains("flash_error =>"));
+    }
+    // web_18. show passes old_email to template context
+    #[test]
+    fn web_lc_18_show_passes_old_email_to_template() {
+        let out = make_auth_login_controller("my_app");
+        let show_pos = out.find("pub async fn show(").unwrap();
+        let store_pos = out.find("pub async fn store(").unwrap();
+        assert!(out[show_pos..store_pos].contains("old_email =>"));
+    }
+    // web_19. show renders auth.login view
+    #[test]
+    fn web_lc_19_show_renders_auth_login_view() {
+        let out = make_auth_login_controller("my_app");
+        let show_pos = out.find("pub async fn show(").unwrap();
+        let store_pos = out.find("pub async fn store(").unwrap();
+        assert!(out[show_pos..store_pos].contains("auth.login"));
+    }
+    // web_20. show returns Result<impl IntoResponse, AppError>
+    #[test]
+    fn web_lc_20_show_returns_result() {
+        let out = make_auth_login_controller("my_app");
+        let show_pos = out.find("pub async fn show(").unwrap();
+        let store_pos = out.find("pub async fn store(").unwrap();
+        assert!(out[show_pos..store_pos].contains("Result<impl IntoResponse, AppError>"));
+    }
+    // web_21. show uses minijinja::context!
+    #[test]
+    fn web_lc_21_show_uses_minijinja_context() {
+        let out = make_auth_login_controller("my_app");
+        let show_pos = out.find("pub async fn show(").unwrap();
+        let store_pos = out.find("pub async fn store(").unwrap();
+        assert!(out[show_pos..store_pos].contains("minijinja::context!"));
+    }
+    // web_22. store accepts Form<LoginRequest>
+    #[test]
+    fn web_lc_22_store_accepts_form() {
+        let out = make_auth_login_controller("my_app");
+        let store_pos = out.find("pub async fn store(").unwrap();
+        assert!(out[store_pos..].contains("Form(req): Form<LoginRequest>"));
+    }
+    // web_23. store validates with req.validate()
+    #[test]
+    fn web_lc_23_store_validates_request() {
+        let out = make_auth_login_controller("my_app");
+        let store_pos = out.find("pub async fn store(").unwrap();
+        assert!(out[store_pos..].contains("req.validate()"));
+    }
+    // web_24. store puts flash_error on validation failure
+    #[test]
+    fn web_lc_24_store_puts_flash_error_on_validation_fail() {
+        let out = make_auth_login_controller("my_app");
+        let store_pos = out.find("pub async fn store(").unwrap();
+        assert!(out[store_pos..].contains("put(\"flash_error\""));
+    }
+    // web_25. store puts flash_old_email on validation failure
+    #[test]
+    fn web_lc_25_store_puts_flash_old_email_on_validation_fail() {
+        let out = make_auth_login_controller("my_app");
+        let store_pos = out.find("pub async fn store(").unwrap();
+        assert!(out[store_pos..].contains("put(\"flash_old_email\""));
+    }
+    // web_26. store redirects to /login on validation failure
+    #[test]
+    fn web_lc_26_store_redirects_to_login_on_validation_fail() {
+        let out = make_auth_login_controller("my_app");
+        let store_pos = out.find("pub async fn store(").unwrap();
+        let errs_pos = out[store_pos..].find("Err(errors)").unwrap() + store_pos;
+        assert!(out[errs_pos..].contains("Redirect::to(\"/login\")"));
+    }
+    // web_27. store uses find_by_email
+    #[test]
+    fn web_lc_27_store_uses_find_by_email() {
+        let out = make_auth_login_controller("my_app");
+        let store_pos = out.find("pub async fn store(").unwrap();
+        assert!(out[store_pos..].contains("find_by_email"));
+    }
+    // web_28. store uses Hash::check
+    #[test]
+    fn web_lc_28_store_uses_hash_check() {
+        let out = make_auth_login_controller("my_app");
+        let store_pos = out.find("pub async fn store(").unwrap();
+        assert!(out[store_pos..].contains("Hash::check"));
+    }
+    // web_29. store calls Auth::login on success
+    #[test]
+    fn web_lc_29_store_calls_auth_login() {
+        let out = make_auth_login_controller("my_app");
+        let store_pos = out.find("pub async fn store(").unwrap();
+        assert!(out[store_pos..].contains("Auth::login"));
+    }
+    // web_30. store redirects to /dashboard on success
+    #[test]
+    fn web_lc_30_store_redirects_to_dashboard_on_success() {
+        let out = make_auth_login_controller("my_app");
+        let store_pos = out.find("pub async fn store(").unwrap();
+        assert!(out[store_pos..].contains("Redirect::to(\"/dashboard\")"));
+    }
+    // web_31. store puts flash_error on wrong password
+    #[test]
+    fn web_lc_31_store_puts_flash_error_on_wrong_password() {
+        let out = make_auth_login_controller("my_app");
+        let store_pos = out.find("pub async fn store(").unwrap();
+        assert!(out[store_pos..].matches("put(\"flash_error\"").count() >= 2,
+            "flash_error must be set for both validation error and wrong password");
+    }
+    // web_32. store redirects to /login on wrong password
+    #[test]
+    fn web_lc_32_store_redirects_to_login_on_wrong_password() {
+        let out = make_auth_login_controller("my_app");
+        let store_pos = out.find("pub async fn store(").unwrap();
+        assert!(out[store_pos..].matches("Redirect::to(\"/login\")").count() >= 2,
+            "must redirect to /login for both validation error and wrong password");
+    }
+    // web_33. store puts flash_old_email on wrong password
+    #[test]
+    fn web_lc_33_store_puts_flash_old_email_on_wrong_password() {
+        let out = make_auth_login_controller("my_app");
+        let store_pos = out.find("pub async fn store(").unwrap();
+        assert!(out[store_pos..].matches("put(\"flash_old_email\"").count() >= 2,
+            "flash_old_email must be set for both validation error and wrong password");
+    }
+    // web_34. destroy calls Auth::logout
+    #[test]
+    fn web_lc_34_destroy_calls_auth_logout() {
+        let out = make_auth_login_controller("my_app");
+        let destroy_pos = out.find("pub async fn destroy(").unwrap();
+        assert!(out[destroy_pos..].contains("Auth::logout"));
+    }
+    // web_35. destroy redirects to /login
+    #[test]
+    fn web_lc_35_destroy_redirects_to_login() {
+        let out = make_auth_login_controller("my_app");
+        let destroy_pos = out.find("pub async fn destroy(").unwrap();
+        assert!(out[destroy_pos..].contains("Redirect::to(\"/login\")"));
+    }
+    // web_36. no ValidatedJson (form-based, not JSON API)
+    #[test]
+    fn web_lc_36_no_validated_json() {
+        assert!(!make_auth_login_controller("my_app").contains("ValidatedJson"));
+    }
+    // web_37. no Jwt (session-based, not JWT)
+    #[test]
+    fn web_lc_37_no_jwt() {
+        assert!(!make_auth_login_controller("my_app").contains("Jwt"));
+    }
+    // web_38. no Json response (redirects only)
+    #[test]
+    fn web_lc_38_no_json_response_type() {
+        assert!(!make_auth_login_controller("my_app").contains("Json(json!"));
+    }
+    // web_39. uses axum::extract::Form
+    #[test]
+    fn web_lc_39_uses_axum_form() {
+        assert!(make_auth_login_controller("my_app").contains("Form"));
+    }
+    // web_40. uses Redirect
+    #[test]
+    fn web_lc_40_uses_redirect() {
+        assert!(make_auth_login_controller("my_app").contains("Redirect"));
+    }
+    // web_41. uses IntoResponse
+    #[test]
+    fn web_lc_41_uses_into_response() {
+        assert!(make_auth_login_controller("my_app").contains("IntoResponse"));
+    }
+    // web_42. store uses use validator::Validate inline
+    #[test]
+    fn web_lc_42_store_uses_validator_validate_inline() {
+        let out = make_auth_login_controller("my_app");
+        let store_pos = out.find("pub async fn store(").unwrap();
+        assert!(out[store_pos..].contains("use validator::Validate"));
+    }
+    // web_43. imports from crate::app::Http::Requests::login_request
+    #[test]
+    fn web_lc_43_imports_from_requests_module() {
+        assert!(make_auth_login_controller("my_app")
+            .contains("crate::app::Http::Requests::login_request"));
+    }
+    // web_44. uses crate name in runtime import
+    #[test]
+    fn web_lc_44_uses_crate_name_in_import() {
+        let out = make_auth_login_controller("my_crate");
+        assert!(out.contains("use my_crate::"));
+    }
+    // web_45. store returns impl IntoResponse (not Result)
+    #[test]
+    fn web_lc_45_store_returns_impl_into_response() {
+        let out = make_auth_login_controller("my_app");
+        let store_pos = out.find("pub async fn store(").unwrap();
+        let destroy_pos = out.find("pub async fn destroy(").unwrap();
+        let store_sig = &out[store_pos..destroy_pos];
+        assert!(store_sig.contains("impl IntoResponse"));
+        assert!(!store_sig.contains("Result<impl IntoResponse"));
+    }
+    // web_46. destroy accepts session parameter
+    #[test]
+    fn web_lc_46_destroy_accepts_session() {
+        let out = make_auth_login_controller("my_app");
+        let destroy_pos = out.find("pub async fn destroy(").unwrap();
+        assert!(out[destroy_pos..].contains("Session"));
+    }
+    // web_47. destroy has no database access
+    #[test]
+    fn web_lc_47_destroy_has_no_db_access() {
+        let out = make_auth_login_controller("my_app");
+        let destroy_pos = out.find("pub async fn destroy(").unwrap();
+        assert!(!out[destroy_pos..].contains("sqlx"));
+        assert!(!out[destroy_pos..].contains("db"));
+    }
+    // web_48. show accepts Session extractor
+    #[test]
+    fn web_lc_48_show_accepts_session() {
+        let out = make_auth_login_controller("my_app");
+        let show_pos = out.find("pub async fn show(").unwrap();
+        let store_pos = out.find("pub async fn store(").unwrap();
+        assert!(out[show_pos..store_pos].contains("Session"));
+    }
+    // web_49. store accepts Session extractor
+    #[test]
+    fn web_lc_49_store_accepts_session() {
+        let out = make_auth_login_controller("my_app");
+        let store_pos = out.find("pub async fn store(").unwrap();
+        let destroy_pos = out.find("pub async fn destroy(").unwrap();
+        assert!(out[store_pos..destroy_pos].contains("Session"));
+    }
+    // web_50. no Japanese text
+    #[test]
+    fn web_lc_50_no_japanese_text() {
+        let out = make_auth_login_controller("my_app");
+        assert!(!out.chars().any(|c| ('\u{3040}'..='\u{30FF}').contains(&c)
+            || ('\u{4E00}'..='\u{9FFF}').contains(&c)));
+    }
+
+    // ── exception_handler_rs: API-path returns JSON, not HTML (25) ────────────
+
+    // eh_01. expects_json function is present
+    #[test]
+    fn eh_01_expects_json_fn_present() {
+        assert!(exception_handler_rs("my_app").contains("fn expects_json("));
+    }
+    // eh_02. render function is present
+    #[test]
+    fn eh_02_render_fn_present() {
+        assert!(exception_handler_rs("my_app").contains("pub async fn render("));
+    }
+    // eh_03. /api/ path check is present inside expects_json
+    #[test]
+    fn eh_03_api_path_check_present() {
+        let out = exception_handler_rs("my_app");
+        let fn_pos = out.find("fn expects_json(").unwrap();
+        let fn_end = out[fn_pos..].find("\n}").unwrap() + fn_pos;
+        assert!(out[fn_pos..fn_end].contains("/api/"),
+            "expects_json must return true for /api/ paths");
+    }
+    // eh_04. /api/ path check uses starts_with
+    #[test]
+    fn eh_04_api_path_uses_starts_with() {
+        let out = exception_handler_rs("my_app");
+        let fn_pos = out.find("fn expects_json(").unwrap();
+        let fn_end = out[fn_pos..].find("\n}").unwrap() + fn_pos;
+        assert!(out[fn_pos..fn_end].contains("starts_with(\"/api/\")"),
+            "must use starts_with to match /api/ prefix");
+    }
+    // eh_05. /api/ path check appears before Accept header check
+    #[test]
+    fn eh_05_api_path_check_before_accept_check() {
+        let out = exception_handler_rs("my_app");
+        let api_pos = out.find("starts_with(\"/api/\")").unwrap();
+        let accept_pos = out.find("ACCEPT").unwrap();
+        assert!(api_pos < accept_pos, "/api/ check must come before Accept header check");
+    }
+    // eh_06. /api/ path check returns true immediately
+    #[test]
+    fn eh_06_api_path_check_returns_true() {
+        let out = exception_handler_rs("my_app");
+        let api_pos = out.find("starts_with(\"/api/\")").unwrap();
+        assert!(out[api_pos..api_pos + 60].contains("return true"),
+            "must return true immediately for /api/ paths");
+    }
+    // eh_07. checks application/json Accept header
+    #[test]
+    fn eh_07_checks_application_json_accept() {
+        assert!(exception_handler_rs("my_app").contains("application/json"));
+    }
+    // eh_08. checks +json Accept header suffix
+    #[test]
+    fn eh_08_checks_plus_json_accept() {
+        assert!(exception_handler_rs("my_app").contains("+json"));
+    }
+    // eh_09. checks /json Accept header
+    #[test]
+    fn eh_09_checks_slash_json_accept() {
+        assert!(exception_handler_rs("my_app").contains("\"/json\""));
+    }
+    // eh_10. checks Content-Type header for JSON
+    #[test]
+    fn eh_10_checks_content_type_header() {
+        assert!(exception_handler_rs("my_app").contains("CONTENT_TYPE"));
+    }
+    // eh_11. checks X-Requested-With header (AJAX detection)
+    #[test]
+    fn eh_11_checks_x_requested_with() {
+        assert!(exception_handler_rs("my_app").contains("x-requested-with"));
+    }
+    // eh_12. checks XMLHttpRequest value
+    #[test]
+    fn eh_12_checks_xmlhttprequest_value() {
+        assert!(exception_handler_rs("my_app").contains("xmlhttprequest"));
+    }
+    // eh_13. handles empty Accept as accepts-any
+    #[test]
+    fn eh_13_empty_accept_is_accepts_any() {
+        let out = exception_handler_rs("my_app");
+        assert!(out.contains("accept.is_empty()") || out.contains("is_empty()"));
+    }
+    // eh_14. falls back to errors.generic template
+    #[test]
+    fn eh_14_falls_back_to_errors_generic() {
+        assert!(exception_handler_rs("my_app").contains("errors.generic"));
+    }
+    // eh_15. renders errors.{code} template
+    #[test]
+    fn eh_15_renders_error_code_template() {
+        assert!(exception_handler_rs("my_app").contains("errors."));
+    }
+    // eh_16. passes status code to template context
+    #[test]
+    fn eh_16_passes_code_to_context() {
+        let out = exception_handler_rs("my_app");
+        let render_pos = out.find("pub async fn render(").unwrap();
+        assert!(out[render_pos..].contains("code     =>"));
+    }
+    // eh_17. passes message to template context
+    #[test]
+    fn eh_17_passes_message_to_context() {
+        let out = exception_handler_rs("my_app");
+        let render_pos = out.find("pub async fn render(").unwrap();
+        assert!(out[render_pos..].contains("message  =>"));
+    }
+    // eh_18. returns original response when no error template found
+    #[test]
+    fn eh_18_returns_original_response_on_missing_template() {
+        let out = exception_handler_rs("my_app");
+        assert!(out.contains("response") && out.contains("return response"));
+    }
+    // eh_19. skips rendering for non-error responses
+    #[test]
+    fn eh_19_skips_non_error_responses() {
+        let out = exception_handler_rs("my_app");
+        assert!(out.contains("is_client_error") || out.contains("is_server_error"));
+    }
+    // eh_20. imports Html for HTML response
+    #[test]
+    fn eh_20_imports_html() {
+        assert!(exception_handler_rs("my_app").contains("Html"));
+    }
+    // eh_21. imports IntoResponse
+    #[test]
+    fn eh_21_imports_into_response() {
+        assert!(exception_handler_rs("my_app").contains("IntoResponse"));
+    }
+    // eh_22. imports State extractor
+    #[test]
+    fn eh_22_imports_state() {
+        assert!(exception_handler_rs("my_app").contains("State"));
+    }
+    // eh_23. no #[path] attribute
+    #[test]
+    fn eh_23_no_path_attribute() {
+        assert!(!exception_handler_rs("my_app").contains("#[path"));
+    }
+    // eh_24. uses provided crate name in AppState import
+    #[test]
+    fn eh_24_uses_crate_name_for_app_state() {
+        assert!(exception_handler_rs("my_crate").contains("use my_crate::AppState"));
+    }
+    // eh_25. no Japanese text
+    #[test]
+    fn eh_25_no_japanese_text() {
+        let out = exception_handler_rs("my_app");
+        assert!(!out.chars().any(|c| ('\u{3040}'..='\u{30FF}').contains(&c)
+            || ('\u{4E00}'..='\u{9FFF}').contains(&c)));
     }
 }
