@@ -161,7 +161,7 @@ pub fn model(name: &str) -> Result<()> {
 fn view_name_to_path(name: &str) -> std::path::PathBuf {
     let parts: Vec<&str> = name.split('.').collect();
     let (dirs, stem) = parts.split_at(parts.len() - 1);
-    let mut path = Path::new("resources/views").to_path_buf();
+    let mut path = Path::new("src/resources/views").to_path_buf();
     for dir in dirs {
         path = path.join(dir);
     }
@@ -208,7 +208,7 @@ pub fn migration(name: &str) -> Result<()> {
     let now = chrono::Utc::now();
     let timestamp = now.format("%Y%m%d%H%M%S");
     let created = now.format("%Y-%m-%d %H:%M:%S").to_string();
-    let base = Path::new("database/migrations");
+    let base = Path::new("src/database/migrations");
 
     let up_path   = base.join(format!("{}_{}.up.sql", timestamp, name));
     let down_path = base.join(format!("{}_{}.down.sql", timestamp, name));
@@ -241,7 +241,7 @@ fn read_crate_name() -> Result<String> {
 }
 
 fn ensure_users_migration() -> Result<()> {
-    let base = Path::new("database/migrations");
+    let base = Path::new("src/database/migrations");
     if !base.exists() {
         fs::create_dir_all(base).with_context(|| "Failed to create database/migrations")?;
     }
@@ -283,7 +283,7 @@ pub fn auth(api: bool) -> Result<()> {
     let dirs: &[&str] = &[
         "src/app/Http/Controllers/Auth",
         "src/app/Http/Requests",
-        if api { "" } else { "resources/views/auth" },
+        if api { "" } else { "src/resources/views/auth" },
     ];
     for dir in dirs.iter().filter(|d| !d.is_empty()) {
         fs::create_dir_all(dir)
@@ -352,15 +352,15 @@ pub fn auth(api: bool) -> Result<()> {
             crate::templates::app_files::make_auth_dashboard_controller(&crate_name),
         ));
         files.push((
-            "resources/views/auth/login.jinja.html",
+            "src/resources/views/auth/login.jinja.html",
             crate::templates::app_files::view_auth_login().to_string(),
         ));
         files.push((
-            "resources/views/auth/register.jinja.html",
+            "src/resources/views/auth/register.jinja.html",
             crate::templates::app_files::view_auth_register().to_string(),
         ));
         files.push((
-            "resources/views/dashboard.jinja.html",
+            "src/resources/views/dashboard.jinja.html",
             crate::templates::app_files::view_auth_dashboard().to_string(),
         ));
     }
@@ -497,15 +497,15 @@ mod tests {
 
     #[test]
     fn single_segment() {
-        assert_eq!(view_name_to_path("welcome"), PathBuf::from("resources/views/welcome.jinja.html"));
+        assert_eq!(view_name_to_path("welcome"), PathBuf::from("src/resources/views/welcome.jinja.html"));
     }
     #[test]
     fn two_segments() {
-        assert_eq!(view_name_to_path("users.index"), PathBuf::from("resources/views/users/index.jinja.html"));
+        assert_eq!(view_name_to_path("users.index"), PathBuf::from("src/resources/views/users/index.jinja.html"));
     }
     #[test]
     fn three_segments() {
-        assert_eq!(view_name_to_path("admin.users.show"), PathBuf::from("resources/views/admin/users/show.jinja.html"));
+        assert_eq!(view_name_to_path("admin.users.show"), PathBuf::from("src/resources/views/admin/users/show.jinja.html"));
     }
 
     // ── inject_mod_decl (25) ───────────────────────────────────────────────────
@@ -2258,7 +2258,7 @@ mod tests {
     }
 
     fn find_migrations(fragment: &str) -> Vec<std::path::PathBuf> {
-        std::fs::read_dir("database/migrations").unwrap()
+        std::fs::read_dir("src/database/migrations").unwrap()
             .filter_map(|e| e.ok().map(|e| e.path()))
             .filter(|p| p.to_string_lossy().contains(fragment))
             .collect()
@@ -2321,8 +2321,8 @@ mod tests {
         with_app(|| {
             view_file("articles.index")?;
 
-            assert!(file_exists("resources/views/articles/index.jinja.html"));
-            let c = read_file("resources/views/articles/index.jinja.html");
+            assert!(file_exists("src/resources/views/articles/index.jinja.html"));
+            let c = read_file("src/resources/views/articles/index.jinja.html");
             assert!(c.contains("{% extends \"layouts.app\" %}"));
             assert!(c.contains("articles.index"));
             Ok(())
@@ -2369,9 +2369,9 @@ mod tests {
             assert!(file_exists("src/app/Http/Controllers/Auth/RegisterController.rs"));
             assert!(file_exists("src/app/Http/Controllers/DashboardController.rs"));
             // Views
-            assert!(file_exists("resources/views/auth/login.jinja.html"));
-            assert!(file_exists("resources/views/auth/register.jinja.html"));
-            assert!(file_exists("resources/views/dashboard.jinja.html"));
+            assert!(file_exists("src/resources/views/auth/login.jinja.html"));
+            assert!(file_exists("src/resources/views/auth/register.jinja.html"));
+            assert!(file_exists("src/resources/views/dashboard.jinja.html"));
             // mod.rs
             let ctrl_mod = read_file("src/app/Http/Controllers/mod.rs");
             assert!(ctrl_mod.contains("pub mod Auth;"));
@@ -2591,24 +2591,24 @@ mod tests {
         with_app(|| {
             // Step 1
             view_file("admin.dashboard")?;
-            assert!(file_exists("resources/views/admin/dashboard.jinja.html"),
+            assert!(file_exists("src/resources/views/admin/dashboard.jinja.html"),
                 "step1: view missing");
-            let view_content = read_file("resources/views/admin/dashboard.jinja.html");
+            let view_content = read_file("src/resources/views/admin/dashboard.jinja.html");
             assert!(view_content.contains("admin.dashboard"), "step1: name not in view");
 
             // Step 2
             middleware("AdminOnly")?;
             assert!(file_exists("src/app/Http/Middleware/AdminOnly.rs"),
                 "step2: middleware file missing");
-            assert_eq!(read_file("resources/views/admin/dashboard.jinja.html"), view_content,
+            assert_eq!(read_file("src/resources/views/admin/dashboard.jinja.html"), view_content,
                 "step2: view file changed by middleware command");
 
             // Step 3
             auth(false)?;
-            assert!(file_exists("resources/views/auth/login.jinja.html"),
+            assert!(file_exists("src/resources/views/auth/login.jinja.html"),
                 "step3: auth login view missing");
             // Earlier files must survive
-            assert!(file_exists("resources/views/admin/dashboard.jinja.html"),
+            assert!(file_exists("src/resources/views/admin/dashboard.jinja.html"),
                 "step3: custom view removed by auth command");
             assert!(read_file("src/app/Http/Middleware/mod.rs")
                 .contains("pub mod AdminOnly;"),
@@ -2832,7 +2832,7 @@ mod tests {
             assert!(!model_mod.contains("posts"), "view path leaked into Models/mod.rs");
 
             assert!(file_exists("src/app/Models/Post.rs"));
-            assert!(file_exists("resources/views/posts/index.jinja.html"));
+            assert!(file_exists("src/resources/views/posts/index.jinja.html"));
             Ok(())
         });
     }
@@ -2850,7 +2850,7 @@ mod tests {
             assert!(file_exists("src/app/Http/Controllers/GalleryController.rs"));
             assert!(file_exists("src/app/Http/Requests/StoreGallery.rs"));
             assert!(file_exists("src/app/Models/Gallery.rs"));
-            assert!(file_exists("resources/views/gallery/show.jinja.html"));
+            assert!(file_exists("src/resources/views/gallery/show.jinja.html"));
             assert!(file_exists("src/app/Http/Middleware/RateLimit.rs"));
 
             let ctrl_mod = read_file("src/app/Http/Controllers/mod.rs");
@@ -2942,7 +2942,7 @@ mod tests {
     fn int_27_view_at_three_level_nested_path() {
         with_app(|| {
             view_file("products/categories/list")?;
-            assert!(file_exists("resources/views/products/categories/list.jinja.html"));
+            assert!(file_exists("src/resources/views/products/categories/list.jinja.html"));
             Ok(())
         });
     }
@@ -2954,9 +2954,9 @@ mod tests {
             view_file("reports/summary")?;
             view_file("admin/users/list")?;
 
-            assert!(file_exists("resources/views/orders/index.jinja.html"));
-            assert!(file_exists("resources/views/reports/summary.jinja.html"));
-            assert!(file_exists("resources/views/admin/users/list.jinja.html"));
+            assert!(file_exists("src/resources/views/orders/index.jinja.html"));
+            assert!(file_exists("src/resources/views/reports/summary.jinja.html"));
+            assert!(file_exists("src/resources/views/admin/users/list.jinja.html"));
             Ok(())
         });
     }

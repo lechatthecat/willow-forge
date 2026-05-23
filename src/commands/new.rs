@@ -37,21 +37,20 @@ fn create_directory_structure(base: &Path) -> Result<()> {
         "src/app/Models",
         "src/app/Exceptions",
         "src/routes",
-        "bootstrap",
-        "config",
-        "database/migrations",
-        "database/seeders",
-        "database/factories",
-        "resources/views/auth",
-        "resources/views/layouts",
-        "resources/views/errors",
-        "resources/views/partials",
-        "resources/lang",
-        "storage/logs",
-        "storage/cache",
+        "src/config",
+        "src/database/migrations",
+        "src/database/seeders",
+        "src/database/factories",
+        "src/resources/views/auth",
+        "src/resources/views/layouts",
+        "src/resources/views/errors",
+        "src/resources/views/partials",
+        "src/resources/lang",
+        "src/storage/logs",
+        "src/storage/cache",
+        "src/docker",
         "tests/Feature",
         "tests/Unit",
-        "docker",
     ];
 
     for dir in dirs {
@@ -105,35 +104,35 @@ fn generate_files(base: &Path, name: &str) -> Result<()> {
     fs::write(base.join("src/routes/web.rs"), app_files::routes_web(&crate_name))?;
     fs::write(base.join("src/routes/api.rs"), app_files::routes_api(&crate_name))?;
 
-    // bootstrap/
-    fs::write(base.join("bootstrap/lib.rs"), app_files::bootstrap_lib_rs())?;
-    fs::write(base.join("bootstrap/app_service_provider.rs"), app_files::app_service_provider())?;
+    // src/ (library root + service provider)
+    fs::write(base.join("src/lib.rs"), app_files::bootstrap_lib_rs())?;
+    fs::write(base.join("src/app_service_provider.rs"), app_files::app_service_provider())?;
 
-    // resources/views/
-    fs::write(base.join("resources/views/layouts/app.jinja.html"), app_files::view_layout_app())?;
-    fs::write(base.join("resources/views/welcome.jinja.html"), app_files::view_welcome())?;
-    fs::write(base.join("resources/views/errors/404.jinja.html"), app_files::view_error_404_html())?;
-    fs::write(base.join("resources/views/errors/500.jinja.html"), app_files::view_error_500_html())?;
-    fs::write(base.join("resources/views/errors/generic.jinja.html"), app_files::view_error_generic_html())?;
+    // src/resources/views/
+    fs::write(base.join("src/resources/views/layouts/app.jinja.html"), app_files::view_layout_app())?;
+    fs::write(base.join("src/resources/views/welcome.jinja.html"), app_files::view_welcome())?;
+    fs::write(base.join("src/resources/views/errors/404.jinja.html"), app_files::view_error_404_html())?;
+    fs::write(base.join("src/resources/views/errors/500.jinja.html"), app_files::view_error_500_html())?;
+    fs::write(base.join("src/resources/views/errors/generic.jinja.html"), app_files::view_error_generic_html())?;
 
-    // database/migrations/
+    // src/database/migrations/
     fs::write(
-        base.join("database/migrations/0001_create_users_table.up.sql"),
+        base.join("src/database/migrations/0001_create_users_table.up.sql"),
         app_files::initial_migration_up_sql(),
     )?;
     fs::write(
-        base.join("database/migrations/0001_create_users_table.down.sql"),
+        base.join("src/database/migrations/0001_create_users_table.down.sql"),
         app_files::initial_migration_down_sql(),
     )?;
 
-    // config/
-    fs::write(base.join("config/app.toml"), app_files::config_app())?;
-    fs::write(base.join("config/auth.toml"), app_files::config_auth())?;
-    fs::write(base.join("config/database.toml"), app_files::config_database())?;
-    fs::write(base.join("config/cache.toml"), app_files::config_cache())?;
+    // src/config/
+    fs::write(base.join("src/config/app.toml"), app_files::config_app())?;
+    fs::write(base.join("src/config/auth.toml"), app_files::config_auth())?;
+    fs::write(base.join("src/config/database.toml"), app_files::config_database())?;
+    fs::write(base.join("src/config/cache.toml"), app_files::config_cache())?;
 
-    // docker/
-    fs::write(base.join("docker/docker-compose.yml"), app_files::docker_compose())?;
+    // src/docker/
+    fs::write(base.join("src/docker/docker-compose.yml"), app_files::docker_compose())?;
 
     // .gitignore
     fs::write(base.join(".gitignore"), app_files::gitignore())?;

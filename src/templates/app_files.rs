@@ -8,7 +8,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-willow-forge-runtime = {{ git = "https://github.com/lechatthecat/willow.git" }}
+willow-forge-runtime = {{ git = "https://github.com/lechatthecat/willow-forge.git" }}
 axum = "0.8.9"
 tokio = {{ version = "1", features = ["full"] }}
 tower = "0.5.3"
@@ -26,7 +26,7 @@ tracing = "0.1"
 tracing-subscriber = {{ version = "0.3", features = ["env-filter"] }}
 
 [lib]
-path = "bootstrap/lib.rs"
+path = "src/lib.rs"
 
 [[bin]]
 name = "{}"
@@ -163,7 +163,7 @@ pub async fn bootstrap() -> Result<Arc<AppState>> {
 
 fn build_view_engine() -> Result<ViewEngine> {
     let mut env = Environment::new();
-    let views_dir = std::path::PathBuf::from("resources/views");
+    let views_dir = std::path::PathBuf::from("src/resources/views");
     load_templates(&mut env, &views_dir, &views_dir)?;
     Ok(env)
 }
@@ -271,11 +271,11 @@ fn expects_json(request: &Request) -> bool {{
 /// How it works:
 /// - Runs on every response (as the outermost layer in main.rs)
 /// - If `expects_json()` is true, passes through as-is
-/// - Otherwise, if the status is 4xx/5xx, looks for resources/views/errors/{{code}}.jinja.html
+/// - Otherwise, if the status is 4xx/5xx, looks for src/resources/views/errors/{{code}}.jinja.html
 /// - If found, replaces the response with the rendered HTML view
 /// - If not found, passes through the original response unchanged
 ///
-/// To add a custom error view, create resources/views/errors/404.jinja.html etc.
+/// To add a custom error view, create src/resources/views/errors/404.jinja.html etc.
 /// To add shared logic (logging, alerting), add it inside this function.
 /// To force JSON for specific paths, modify expects_json().
 pub async fn render(
@@ -710,7 +710,7 @@ pub fn view_welcome() -> &'static str {
 
 <h2>Getting Started</h2>
 <p>Start the database and Redis cluster with Docker:</p>
-<pre><code>docker compose -f docker/docker-compose.yml up -d --build</code></pre>
+<pre><code>docker compose -f src/docker/docker-compose.yml up -d --build</code></pre>
 <p>Run database migrations (safe to run while the server is up &mdash; it only connects to PostgreSQL, not port 3000):</p>
 <pre><code>willow-forge migrate</code></pre>
 
@@ -834,7 +834,7 @@ docker logs --tail 50 --follow --timestamps redis-node-1</code></pre>
 <pre><code>docker ps -a</code></pre>
 
 <h3>Stop containers</h3>
-<pre><code>docker compose -f docker/docker-compose.yml down</code></pre>
+<pre><code>docker compose -f src/docker/docker-compose.yml down</code></pre>
 
 <h3>Check volumes</h3>
 <pre><code>docker volume ls
@@ -850,9 +850,9 @@ docker volume inspect &lt;volume-name&gt;</code></pre>
   docker exec redis-node-$(( port - 7000 )) redis-cli -p $port FLUSHALL
   docker exec redis-node-$(( port - 7000 )) redis-cli -p $port CLUSTER RESET
 done
-docker compose -f docker/docker-compose.yml restart redis-cluster-init</code></pre>
+docker compose -f src/docker/docker-compose.yml restart redis-cluster-init</code></pre>
 <p>PowerShell:</p>
-<pre><code>foreach ($port in 7001, 7002, 7003, 7004, 7005, 7006) { $node = $port - 7000; docker exec redis-node-$node redis-cli -p $port FLUSHALL; docker exec redis-node-$node redis-cli -p $port CLUSTER RESET }; docker compose -f docker/docker-compose.yml restart redis-cluster-init</code></pre>
+<pre><code>foreach ($port in 7001, 7002, 7003, 7004, 7005, 7006) { $node = $port - 7000; docker exec redis-node-$node redis-cli -p $port FLUSHALL; docker exec redis-node-$node redis-cli -p $port CLUSTER RESET }; docker compose -f src/docker/docker-compose.yml restart redis-cluster-init</code></pre>
 
 
 <script>
