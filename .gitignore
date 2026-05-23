@@ -3,7 +3,8 @@ demo-app/
 demo/
 target/
 specs/
-claude.md
+CLAUDE.md
+AGENT.md
 next-feature.md
 TODO.md
 .vscode/
