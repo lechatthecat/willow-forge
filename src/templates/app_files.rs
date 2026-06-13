@@ -127,7 +127,7 @@ pub fn bootstrap_lib_rs() -> &'static str {
     r#"pub use willow_forge_runtime::{
     AppError, AppState, Auth, AuthUser, Cache, Config, Context, Email, Hash, Jwt, JwtUser,
     MailConfig, Mailer, RedisCluster, RedisConfig, Services, Session, ValidatedJson, ViewEngine,
-    authenticate, random_token, session_middleware, view,
+    authenticate, email_verification_hash, random_token, session_middleware, view,
 };
 
 mod app_service_provider;
@@ -785,6 +785,9 @@ pub fn view_welcome() -> &'static str {
         <tr><td><code>POST</code></td><td><code>/forgot-password</code></td><td>Email a reset link</td></tr>
         <tr><td><code>GET</code></td><td><code>/reset-password/{token}</code></td><td>Reset password form</td></tr>
         <tr><td><code>POST</code></td><td><code>/reset-password</code></td><td>Submit new password</td></tr>
+        <tr><td><code>GET</code></td><td><code><a href="/email/verify">/email/verify</a></code></td><td>Email verification notice</td></tr>
+        <tr><td><code>GET</code></td><td><code>/email/verify/{id}/{hash}</code></td><td>Confirm email address</td></tr>
+        <tr><td><code>POST</code></td><td><code>/email/verification-notification</code></td><td>Resend verification email</td></tr>
     </tbody>
 </table>
 
@@ -992,6 +995,7 @@ pub struct User {
     pub email: String,
     #[serde(skip_serializing)]
     pub password: String,
+    pub email_verified_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -1002,17 +1006,30 @@ impl User {
             .fetch_optional(db)
             .await
     }
+
+    pub async fn find(db: &PgPool, id: i32) -> Result<Option<Self>, sqlx::Error> {
+        sqlx::query_as::<_, Self>("SELECT * FROM users WHERE id = $1 LIMIT 1")
+            .bind(id)
+            .fetch_optional(db)
+            .await
+    }
+
+    /// Whether this user has confirmed their email address.
+    pub fn is_verified(&self) -> bool {
+        self.email_verified_at.is_some()
+    }
 }
 "#
 }
 
 pub fn initial_migration_up_sql() -> &'static str {
     r#"CREATE TABLE IF NOT EXISTS users (
-    id         SERIAL PRIMARY KEY,
-    name       VARCHAR(255)  NOT NULL,
-    email      VARCHAR(255)  NOT NULL UNIQUE,
-    password   VARCHAR(255)  NOT NULL,
-    created_at TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+    id                SERIAL PRIMARY KEY,
+    name              VARCHAR(255)  NOT NULL,
+    email             VARCHAR(255)  NOT NULL UNIQUE,
+    password          VARCHAR(255)  NOT NULL,
+    email_verified_at TIMESTAMPTZ,
+    created_at        TIMESTAMPTZ   NOT NULL DEFAULT NOW()
 );
 "#
 }
@@ -1297,7 +1314,11 @@ pub async fn store(
     .await;
 
     match result {{
-        Ok(_) => Redirect::to("/login").into_response(),
+        Ok(user) => {{
+            // Send the email-verification link; best-effort, never blocks signup.
+            crate::app::http::controllers::auth::verify_email_controller::send_verification_email(&ctx, &user).await;
+            Redirect::to("/login").into_response()
+        }}
         Err(sqlx::Error::Database(ref db)) if db.constraint() == Some("users_email_key") => {{
             session.put("flash_error", "That email address is already registered.");
             session.put("flash_old_name", req.name.as_str());
@@ -1384,11 +1405,12 @@ pub fn view_auth_register() -> &'static str {
 pub fn make_auth_dashboard_controller(name: &str) -> String {
     format!(
         r#"use axum::response::IntoResponse;
-use ::{name}::{{AppError, AuthUser, Context, view}};
+use ::{name}::{{AppError, Context, view}};
+use crate::app::http::middleware::ensure_email_verified::VerifiedUser;
 
 /// GET /dashboard  Erequires session login
-pub async fn index(auth: AuthUser, ctx: Context) -> Result<impl IntoResponse, AppError> {{
-    Ok(view(&ctx, "dashboard", minijinja::context! {{ user_id => auth.id }})?)
+pub async fn index(user: VerifiedUser, ctx: Context) -> Result<impl IntoResponse, AppError> {{
+    Ok(view(&ctx, "dashboard", minijinja::context! {{ user_id => user.id }})?)
 }}
 "#,
         name = name
@@ -1411,11 +1433,11 @@ pub fn view_auth_dashboard() -> &'static str {
 }
 
 pub fn auth_route_use_decl() -> &'static str {
-    "use crate::app::http::controllers::auth::{login_controller, register_controller, forgot_password_controller, reset_password_controller};\nuse crate::app::http::controllers::dashboard_controller;"
+    "use crate::app::http::controllers::auth::{login_controller, register_controller, forgot_password_controller, reset_password_controller, verify_email_controller};\nuse crate::app::http::controllers::dashboard_controller;"
 }
 
 pub fn auth_route_snippet() -> &'static str {
-    "\n        .route(\"/login\",    get(login_controller::show).post(login_controller::store))\n        .route(\"/logout\",   post(login_controller::destroy))\n        .route(\"/register\", get(register_controller::show).post(register_controller::store))\n        .route(\"/dashboard\", get(dashboard_controller::index))\n        .route(\"/forgot-password\", get(forgot_password_controller::show).post(forgot_password_controller::store))\n        .route(\"/reset-password/{token}\", get(reset_password_controller::show))\n        .route(\"/reset-password\", post(reset_password_controller::store))"
+    "\n        .route(\"/login\",    get(login_controller::show).post(login_controller::store))\n        .route(\"/logout\",   post(login_controller::destroy))\n        .route(\"/register\", get(register_controller::show).post(register_controller::store))\n        .route(\"/dashboard\", get(dashboard_controller::index))\n        .route(\"/forgot-password\", get(forgot_password_controller::show).post(forgot_password_controller::store))\n        .route(\"/reset-password/{token}\", get(reset_password_controller::show))\n        .route(\"/reset-password\", post(reset_password_controller::store))\n        .route(\"/email/verify\", get(verify_email_controller::notice))\n        .route(\"/email/verify/{id}/{hash}\", get(verify_email_controller::verify))\n        .route(\"/email/verification-notification\", post(verify_email_controller::resend))"
 }
 
 // ── Password reset scaffolding templates ───────────────────────────────────────
@@ -1718,6 +1740,201 @@ pub fn view_auth_reset_password() -> &'static str {
     <div>
       <button type="submit">Reset password</button>
     </div>
+  </form>
+</div>
+{% endblock %}
+"#
+}
+
+// ── Email verification scaffolding templates ───────────────────────────────────
+
+pub fn make_ensure_email_verified_middleware(name: &str) -> String {
+    format!(
+        r#"use std::sync::Arc;
+
+use axum::{{
+    extract::FromRequestParts,
+    http::{{header, request::Parts, StatusCode}},
+    response::{{IntoResponse, Redirect, Response}},
+}};
+
+use ::{name}::{{AppState, AuthUser, Context}};
+
+/// Guard extractor for routes that require a verified email address.
+///
+/// Resolves the logged-in user (like `AuthUser`), then checks the
+/// `email_verified_at` column. Unverified users are redirected to
+/// `/email/verify` (web) or rejected with 403 (API / JSON clients).
+///
+/// Add `_verified: VerifiedUser` to any handler to enforce verification.
+pub struct VerifiedUser {{
+    pub id: i64,
+}}
+
+impl<S> FromRequestParts<S> for VerifiedUser
+where
+    S: Send + Sync,
+    Arc<AppState>: axum::extract::FromRef<S>,
+{{
+    type Rejection = Response;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {{
+        // Must be authenticated first; reuse AuthUser's own rejection.
+        let auth = AuthUser::from_request_parts(parts, state).await?;
+
+        let ctx = Context::from_request_parts(parts, state)
+            .await
+            .map_err(|e| e.into_response())?;
+
+        let verified_at = sqlx::query_scalar::<_, Option<chrono::DateTime<chrono::Utc>>>(
+            "SELECT email_verified_at FROM users WHERE id = $1",
+        )
+        .bind(auth.id as i32)
+        .fetch_optional(&ctx.state.services.db)
+        .await;
+
+        match verified_at {{
+            Ok(Some(Some(_))) => Ok(VerifiedUser {{ id: auth.id }}),
+            Ok(_) => Err(unverified_response(parts)),
+            Err(e) => {{
+                tracing::error!("Verified guard query failed: {{}}", e);
+                Err(StatusCode::INTERNAL_SERVER_ERROR.into_response())
+            }}
+        }}
+    }}
+}}
+
+fn unverified_response(parts: &Parts) -> Response {{
+    let wants_json = parts.uri.path().starts_with("/api/")
+        || parts
+            .headers
+            .get(header::ACCEPT)
+            .and_then(|v| v.to_str().ok())
+            .map(|a| a.contains("application/json"))
+            .unwrap_or(false);
+
+    if wants_json {{
+        (StatusCode::FORBIDDEN, "Your email address is not verified.").into_response()
+    }} else {{
+        Redirect::to("/email/verify").into_response()
+    }}
+}}
+"#,
+        name = name
+    )
+}
+
+pub fn make_auth_verify_email_controller(name: &str) -> String {
+    format!(
+        r#"use axum::{{
+    extract::Path,
+    response::{{IntoResponse, Redirect, Response}},
+}};
+
+use ::{name}::{{AppError, AuthUser, Context, Email, Session, email_verification_hash, view}};
+use crate::app::models::user::User;
+
+/// GET /email/verify  Eprompt the user to verify their address.
+pub async fn notice(
+    _auth: AuthUser,
+    ctx: Context,
+    session: Session,
+) -> Result<impl IntoResponse, AppError> {{
+    let status: Option<String> = session.get("flash_status");
+    session.forget("flash_status");
+    Ok(view(&ctx, "auth.verify-email", minijinja::context! {{
+        flash_status => status,
+    }})?)
+}}
+
+/// GET /email/verify/{{id}}/{{hash}}  Econfirm the address from the emailed link.
+pub async fn verify(
+    ctx: Context,
+    Path((id, hash)): Path<(i32, String)>,
+) -> Response {{
+    let user = match User::find(&ctx.state.services.db, id).await {{
+        Ok(Some(u)) => u,
+        _ => return (axum::http::StatusCode::FORBIDDEN, "Invalid verification link.").into_response(),
+    }};
+
+    if email_verification_hash(&user.email) != hash {{
+        return (axum::http::StatusCode::FORBIDDEN, "Invalid verification link.").into_response();
+    }}
+
+    if !user.is_verified() {{
+        let _ = sqlx::query(
+            "UPDATE users SET email_verified_at = NOW() WHERE id = $1 AND email_verified_at IS NULL",
+        )
+        .bind(id)
+        .execute(&ctx.state.services.db)
+        .await;
+    }}
+
+    Redirect::to("/dashboard").into_response()
+}}
+
+/// POST /email/verification-notification  Eresend the verification link.
+pub async fn resend(
+    auth: AuthUser,
+    ctx: Context,
+    session: Session,
+) -> impl IntoResponse {{
+    if let Ok(Some(user)) = User::find(&ctx.state.services.db, auth.id as i32).await {{
+        if !user.is_verified() {{
+            send_verification_email(&ctx, &user).await;
+        }}
+    }}
+    session.put("flash_status", "A fresh verification link has been sent to your email address.");
+    Redirect::to("/email/verify")
+}}
+
+/// Build and send the verification email for `user`. Best-effort: failures are
+/// logged but do not surface to the caller.
+pub async fn send_verification_email(ctx: &Context, user: &User) {{
+    let base = std::env::var("APP_URL").unwrap_or_else(|_| "http://localhost:3000".to_string());
+    let hash = email_verification_hash(&user.email);
+    let link = format!("{{}}/email/verify/{{}}/{{}}", base.trim_end_matches('/'), user.id, hash);
+
+    let text = format!(
+        "Welcome! Please confirm your email address by opening this link:\n{{}}\n",
+        link,
+    );
+    let html = format!(
+        "<p>Welcome! Please confirm your email address.</p>\
+         <p><a href=\"{{}}\">Verify email address</a></p>",
+        link,
+    );
+    let email = Email::new(user.email.as_str(), "Verify your email address")
+        .text(text)
+        .html(html);
+    if let Err(e) = ctx.state.services.mailer.send(&email).await {{
+        tracing::error!("Failed to send verification email: {{}}", e);
+    }}
+}}
+"#,
+        name = name
+    )
+}
+
+pub fn view_auth_verify_email() -> &'static str {
+    r#"{% extends "layouts.app" %}
+
+{% block title %}Verify Email{% endblock %}
+
+{% block content %}
+<div class="auth-form">
+  <h1>Verify Your Email</h1>
+  {% if flash_status %}
+  <div class="alert alert-success">{{ flash_status }}</div>
+  {% endif %}
+  <p>Thanks for signing up! Before getting started, please verify your email
+     address by clicking the link we just emailed to you. If you didn't receive
+     it, request another below.</p>
+  <form method="POST" action="/email/verification-notification">
+    <button type="submit">Resend verification email</button>
+  </form>
+  <form method="POST" action="/logout" style="margin-top:1rem">
+    <button type="submit">Logout</button>
   </form>
 </div>
 {% endblock %}
@@ -3237,11 +3454,11 @@ mod tests {
     fn dc_01_no_path_attribute() {
         assert!(!make_auth_dashboard_controller("my_app").contains("#[path"));
     }
-    // dc_02. behavior: uses AuthUser not Session
+    // dc_02. behavior: guarded by the VerifiedUser extractor, not raw Session
     #[test]
-    fn dc_02_uses_auth_user_extractor() {
+    fn dc_02_uses_verified_user_extractor() {
         let out = make_auth_dashboard_controller("my_app");
-        assert!(out.contains("AuthUser") && !out.contains("session."));
+        assert!(out.contains("VerifiedUser") && !out.contains("session."));
     }
     // dc_03. behavior: no DB access needed
     #[test]
@@ -3253,10 +3470,10 @@ mod tests {
     fn dc_04_renders_dashboard_view() {
         assert!(make_auth_dashboard_controller("my_app").contains("\"dashboard\""));
     }
-    // dc_05. behavior: passes user_id from auth.id
+    // dc_05. behavior: passes user_id from the verified user
     #[test]
     fn dc_05_passes_user_id_from_auth() {
-        assert!(make_auth_dashboard_controller("my_app").contains("user_id => auth.id"));
+        assert!(make_auth_dashboard_controller("my_app").contains("user_id => user.id"));
     }
     // dc_06. behavior: returns Result<impl IntoResponse, AppError>
     #[test]

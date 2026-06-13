@@ -360,6 +360,7 @@ pub fn auth(api: bool) -> Result<()> {
     let dirs: &[&str] = &[
         "src/app/http/controllers/auth",
         "src/app/http/requests",
+        if api { "" } else { "src/app/http/middleware" },
         if api { "" } else { "src/resources/views/auth" },
     ];
     for dir in dirs.iter().filter(|d| !d.is_empty()) {
@@ -371,7 +372,7 @@ pub fn auth(api: bool) -> Result<()> {
     let auth_mod_decls = if api {
         "pub mod api_login_controller;\npub mod api_register_controller;\n"
     } else {
-        "pub mod login_controller;\npub mod register_controller;\npub mod forgot_password_controller;\npub mod reset_password_controller;\n"
+        "pub mod login_controller;\npub mod register_controller;\npub mod forgot_password_controller;\npub mod reset_password_controller;\npub mod verify_email_controller;\n"
     };
     if !Path::new(auth_mod).exists() {
         fs::write(auth_mod, auth_mod_decls)
@@ -437,6 +438,14 @@ pub fn auth(api: bool) -> Result<()> {
             crate::templates::app_files::make_auth_reset_password_controller(&crate_name),
         ));
         files.push((
+            "src/app/http/controllers/auth/verify_email_controller.rs",
+            crate::templates::app_files::make_auth_verify_email_controller(&crate_name),
+        ));
+        files.push((
+            "src/app/http/middleware/ensure_email_verified.rs",
+            crate::templates::app_files::make_ensure_email_verified_middleware(&crate_name),
+        ));
+        files.push((
             "src/app/http/requests/forgot_password_request.rs",
             crate::templates::app_files::make_auth_forgot_password_request().to_string(),
         ));
@@ -459,6 +468,10 @@ pub fn auth(api: bool) -> Result<()> {
         files.push((
             "src/resources/views/auth/reset-password.jinja.html",
             crate::templates::app_files::view_auth_reset_password().to_string(),
+        ));
+        files.push((
+            "src/resources/views/auth/verify-email.jinja.html",
+            crate::templates::app_files::view_auth_verify_email().to_string(),
         ));
         files.push((
             "src/resources/views/dashboard.jinja.html",
@@ -490,8 +503,10 @@ pub fn auth(api: bool) -> Result<()> {
         inject_mod_decl("src/app/http/controllers/mod.rs", "dashboard_controller")?;
         inject_mod_decl("src/app/http/controllers/auth/mod.rs", "forgot_password_controller")?;
         inject_mod_decl("src/app/http/controllers/auth/mod.rs", "reset_password_controller")?;
+        inject_mod_decl("src/app/http/controllers/auth/mod.rs", "verify_email_controller")?;
         inject_mod_decl("src/app/http/requests/mod.rs", "forgot_password_request")?;
         inject_mod_decl("src/app/http/requests/mod.rs", "reset_password_request")?;
+        inject_mod_decl("src/app/http/middleware/mod.rs", "ensure_email_verified")?;
         let use_decl = crate::templates::app_files::auth_route_use_decl();
         let route_lines = crate::templates::app_files::auth_route_snippet();
         inject_auth_into_routes("src/routes/web.rs", use_decl, route_lines)?;
@@ -1396,6 +1411,94 @@ mod tests {
         assert!(reset.contains("action=\"/reset-password\""));
         assert!(reset.contains("name=\"token\""));
         assert!(reset.contains("name=\"password_confirmation\""));
+    }
+
+    // ── email verification scaffolding ─────────────────────────────────────────
+
+    // 98. /email/verify notice route injected
+    #[test]
+    fn ev_98_verify_notice_route_injected() {
+        let d = tmp(); let f = d.path().join("web.rs");
+        fs::write(&f, web_content()).unwrap(); inject_web(&f);
+        let c = fs::read_to_string(&f).unwrap();
+        assert!(c.contains("\"/email/verify\""));
+        assert!(c.contains("get(verify_email_controller::notice)"));
+    }
+    // 99. /email/verify/{id}/{hash} confirm route injected
+    #[test]
+    fn ev_99_verify_confirm_route_injected() {
+        let d = tmp(); let f = d.path().join("web.rs");
+        fs::write(&f, web_content()).unwrap(); inject_web(&f);
+        let c = fs::read_to_string(&f).unwrap();
+        assert!(c.contains("\"/email/verify/{id}/{hash}\""));
+        assert!(c.contains("get(verify_email_controller::verify)"));
+    }
+    // 100. resend route injected
+    #[test]
+    fn ev_100_verify_resend_route_injected() {
+        let d = tmp(); let f = d.path().join("web.rs");
+        fs::write(&f, web_content()).unwrap(); inject_web(&f);
+        let c = fs::read_to_string(&f).unwrap();
+        assert!(c.contains("\"/email/verification-notification\""));
+        assert!(c.contains("post(verify_email_controller::resend)"));
+    }
+    // 101. use_decl imports verify_email_controller
+    #[test]
+    fn ev_101_use_decl_has_verify_controller() {
+        assert!(web_use().contains("verify_email_controller"));
+    }
+    // 102. verify controller verifies hash, marks verified, resends
+    #[test]
+    fn ev_102_verify_controller_content() {
+        let c = af::make_auth_verify_email_controller("my_app");
+        assert!(c.contains("email_verification_hash"));
+        assert!(c.contains("UPDATE users SET email_verified_at = NOW()"));
+        assert!(c.contains("pub async fn notice"));
+        assert!(c.contains("pub async fn verify"));
+        assert!(c.contains("pub async fn resend"));
+        assert!(c.contains("services.mailer.send"));
+    }
+    // 103. guard middleware checks the column and redirects unverified users
+    #[test]
+    fn ev_103_middleware_content() {
+        let c = af::make_ensure_email_verified_middleware("my_app");
+        assert!(c.contains("pub struct VerifiedUser"));
+        assert!(c.contains("SELECT email_verified_at FROM users WHERE id = $1"));
+        assert!(c.contains("Redirect::to(\"/email/verify\")"));
+        assert!(c.contains("FromRef"));
+    }
+    // 104. verify-email view posts to the resend endpoint
+    #[test]
+    fn ev_104_view_content() {
+        let v = af::view_auth_verify_email();
+        assert!(v.contains("action=\"/email/verification-notification\""));
+        assert!(v.contains("Verify"));
+    }
+    // 105. User model carries the verification column + helper
+    #[test]
+    fn ev_105_user_model_has_verified_column() {
+        let m = af::user_model_rs();
+        assert!(m.contains("email_verified_at: Option<DateTime<Utc>>"));
+        assert!(m.contains("fn is_verified"));
+        assert!(m.contains("pub async fn find("));
+    }
+    // 106. base users migration includes the verification column
+    #[test]
+    fn ev_106_users_migration_has_verified_column() {
+        assert!(af::initial_migration_up_sql().contains("email_verified_at"));
+    }
+    // 107. registration sends a verification email
+    #[test]
+    fn ev_107_register_sends_verification() {
+        let c = af::make_auth_register_controller("my_app");
+        assert!(c.contains("verify_email_controller::send_verification_email"));
+    }
+    // 108. dashboard requires a verified user
+    #[test]
+    fn ev_108_dashboard_requires_verified_user() {
+        let c = af::make_auth_dashboard_controller("my_app");
+        assert!(c.contains("VerifiedUser"));
+        assert!(c.contains("ensure_email_verified"));
     }
 
     // ── combined / edge cases (15) ─────────────────────────────────────────────
