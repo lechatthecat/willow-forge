@@ -29,9 +29,9 @@ async fn build_pool() -> Result<PgPool> {
 }
 
 async fn build_migrator() -> Result<Migrator> {
-    Migrator::new(Path::new("database/migrations"))
+    Migrator::new(Path::new("src/database/migrations"))
         .await
-        .context("Failed to load migrations from database/migrations/")
+        .context("Failed to load migrations from src/database/migrations/")
 }
 
 // ── willow-forge migrate ────────────────────────────────────────────────────────────
