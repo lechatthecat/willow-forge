@@ -94,7 +94,7 @@ fn generate_files(base: &Path, name: &str) -> Result<()> {
     fs::write(base.join("src/app/http/middleware/log_request.rs"), app_files::middleware_log_request_rs())?;
     fs::write(base.join("src/app/http/requests/mod.rs"), app_files::src_app_http_requests_mod_rs())?;
     fs::write(base.join("src/app/http/requests/store_user_request.rs"), app_files::store_user_request())?;
-    fs::write(base.join("src/app/models/mod.rs"), app_files::src_app_models_mod_rs())?;
+    fs::write(base.join("src/app/models/mod.rs"), app_files::models_mod_rs())?;
     fs::write(base.join("src/app/models/user.rs"), app_files::user_model_rs())?;
     fs::write(base.join("src/app/exceptions/mod.rs"), app_files::src_app_exceptions_mod_rs())?;
     fs::write(base.join("src/app/exceptions/handler.rs"), app_files::exception_handler_rs(&crate_name))?;

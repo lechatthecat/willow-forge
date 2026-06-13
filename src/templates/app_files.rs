@@ -67,7 +67,7 @@ mod routes;
 
 use anyhow::Result;
 use std::sync::Arc;
-use {name}::{{bootstrap, AppError}};
+use ::{name}::{{bootstrap, AppError}};
 use tracing_subscriber::{{layer::SubscriberExt, util::SubscriberInitExt}};
 
 async fn not_found() -> impl axum::response::IntoResponse {{
@@ -218,7 +218,7 @@ pub fn exception_handler_rs(name: &str) -> String {
 use minijinja::context;
 use std::sync::Arc;
 
-use {name}::AppState;
+use ::{name}::AppState;
 
 /// Returns true if the client expects a JSON response.
 ///
@@ -406,7 +406,7 @@ pub fn routes_api(name: &str) -> String {
         r#"use axum::{{routing::get, Router}};
 use std::sync::Arc;
 
-use {name}::AppState;
+use ::{name}::AppState;
 use crate::app::http::controllers::{{user_controller, status_controller}};
 
 pub fn routes() -> Router<Arc<AppState>> {{
@@ -425,7 +425,7 @@ pub fn routes_web(name: &str) -> String {
         r#"use axum::{{routing::get, Router}};
 use std::sync::Arc;
 
-use {name}::AppState;
+use ::{name}::AppState;
 use crate::app::http::controllers::home_controller;
 
 pub fn routes() -> Router<Arc<AppState>> {{
@@ -442,8 +442,8 @@ pub fn home_controller(name: &str) -> String {
         r#"use axum::response::IntoResponse;
 use minijinja::context;
 
-use {name}::{{AppError, Context}};
-use {name}::view::view;
+use ::{name}::{{AppError, Context}};
+use ::{name}::view::view;
 
 pub async fn index(ctx: Context) -> Result<impl IntoResponse, AppError> {{
     Ok(view(
@@ -467,7 +467,7 @@ use serde::Deserialize;
 use serde_json::json;
 use validator::Validate;
 
-use {name}::{{AppError, Cache, Context, ValidatedJson}};
+use ::{name}::{{AppError, Cache, Context, ValidatedJson}};
 use crate::app::models::user::User;
 
 // ============================================================
@@ -596,7 +596,7 @@ pub fn status_controller(name: &str) -> String {
         r#"use axum::{{Json, response::IntoResponse}};
 use serde_json::json;
 
-use {name}::Context;
+use ::{name}::Context;
 
 pub async fn index(ctx: Context) -> impl IntoResponse {{
     // Both checks run concurrently  Eneither blocks the other.
@@ -936,6 +936,10 @@ pub fn src_app_models_mod_rs() -> &'static str {
     "pub mod user;\n"
 }
 
+pub fn models_mod_rs() -> &'static str {
+    src_app_models_mod_rs()
+}
+
 pub fn src_app_exceptions_mod_rs() -> &'static str {
     "pub mod handler;\n"
 }
@@ -992,7 +996,7 @@ pub fn bootstrap_middleware_rs(name: &str) -> String {
 use axum::{{extract::Request, middleware, middleware::Next, Router}};
 use std::sync::Arc;
 
-use {name}::{{AppState, session_middleware}};
+use ::{name}::{{AppState, session_middleware}};
 
 /// Global middleware  Eruns on every request.
 pub fn global(state: Arc<AppState>, router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {{
@@ -1009,7 +1013,7 @@ pub fn global(state: Arc<AppState>, router: Router<Arc<AppState>>) -> Router<Arc
 pub fn web(router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {{
     router
     // Protect all web routes with auth:
-    // .layer(middleware::from_fn({name}::authenticate))
+    // .layer(middleware::from_fn(::{name}::authenticate))
 }}
 
 /// API middleware  Eruns only on API routes (src/routes/api.rs).
@@ -1127,7 +1131,7 @@ pub fn make_auth_login_controller(name: &str) -> String {
     response::{{IntoResponse, Redirect}},
 }};
 
-use {name}::{{AppError, Auth, Context, Hash, Session, view}};
+use ::{name}::{{AppError, Auth, Context, Hash, Session, view}};
 use crate::app::http::requests::login_request::LoginRequest;
 
 /// GET /login
@@ -1191,7 +1195,7 @@ pub fn make_auth_register_controller(name: &str) -> String {
     response::{{IntoResponse, Redirect}},
 }};
 
-use {name}::{{AppError, Auth, Context, Hash, Session, view}};
+use ::{name}::{{AppError, Context, Hash, Session, view}};
 use crate::app::http::requests::register_request::RegisterRequest;
 
 /// GET /register
@@ -1335,7 +1339,7 @@ pub fn view_auth_register() -> &'static str {
 pub fn make_auth_dashboard_controller(name: &str) -> String {
     format!(
         r#"use axum::response::IntoResponse;
-use {name}::{{AppError, AuthUser, Context, view}};
+use ::{name}::{{AppError, AuthUser, Context, view}};
 
 /// GET /dashboard  Erequires session login
 pub async fn index(auth: AuthUser, ctx: Context) -> Result<impl IntoResponse, AppError> {{
@@ -1361,13 +1365,21 @@ pub fn view_auth_dashboard() -> &'static str {
 "#
 }
 
+pub fn auth_route_use_decl() -> &'static str {
+    "use crate::app::http::controllers::auth::{login_controller, register_controller};\nuse crate::app::http::controllers::dashboard_controller;"
+}
+
+pub fn auth_route_snippet() -> &'static str {
+    "\n        .route(\"/login\",    get(login_controller::show).post(login_controller::store))\n        .route(\"/logout\",   post(login_controller::destroy))\n        .route(\"/register\", get(register_controller::show).post(register_controller::store))\n        .route(\"/dashboard\", get(dashboard_controller::index))"
+}
+
 pub fn make_auth_api_login_controller(name: &str) -> String {
     format!(
         r#"use axum::{{Json, http::HeaderMap, response::IntoResponse}};
 use chrono::Utc;
 use serde_json::json;
 
-use {name}::{{AppError, Context, Hash, Jwt, JwtUser, ValidatedJson}};
+use ::{name}::{{AppError, Context, Hash, Jwt, JwtUser, ValidatedJson}};
 use crate::app::http::requests::login_request::LoginRequest;
 
 /// POST /api/auth/login
@@ -1449,7 +1461,7 @@ pub fn make_auth_api_register_controller(name: &str) -> String {
         r#"use axum::{{Json, response::IntoResponse, http::StatusCode}};
 use serde_json::json;
 
-use {name}::{{AppError, Context, Hash, Jwt, ValidatedJson}};
+use ::{name}::{{AppError, Context, Hash, Jwt, ValidatedJson}};
 use crate::app::http::requests::register_request::RegisterRequest;
 
 /// POST /api/auth/register
@@ -1486,6 +1498,14 @@ pub async fn store(
 "#,
         name = name
     )
+}
+
+pub fn auth_api_route_use_decl() -> &'static str {
+    "use crate::app::http::controllers::auth::{api_login_controller, api_register_controller};"
+}
+
+pub fn auth_api_route_snippet() -> &'static str {
+    "\n        .route(\"/api/auth/login\",    post(api_login_controller::store))\n        .route(\"/api/auth/refresh\",  post(api_login_controller::refresh))\n        .route(\"/api/auth/logout\",   post(api_login_controller::destroy))\n        .route(\"/api/auth/register\", post(api_register_controller::store))\n        .route(\"/api/me\",            get(api_login_controller::me))"
 }
 
 fn pascal_to_snake(name: &str) -> String {
@@ -1773,32 +1793,32 @@ mod tests {
     #[test]
     fn main_rs_uses_crate_name_in_import() {
         let out = main_rs("my_app");
-        assert!(out.contains("use my_app::{bootstrap, AppError}"));
+        assert!(out.contains("use ::my_app::{bootstrap, AppError}"));
     }
 
     #[test]
     fn routes_api_uses_crate_name() {
         let out = routes_api("my_app");
-        assert!(out.contains("use my_app::AppState"));
+        assert!(out.contains("use ::my_app::AppState"));
     }
 
     #[test]
     fn routes_web_uses_crate_name() {
         let out = routes_web("my_app");
-        assert!(out.contains("use my_app::AppState"));
+        assert!(out.contains("use ::my_app::AppState"));
     }
 
     #[test]
     fn home_controller_uses_crate_name() {
         let out = home_controller("my_app");
-        assert!(out.contains("use my_app::{AppError, Context}"));
+        assert!(out.contains("use ::my_app::{AppError, Context}"));
         assert!(out.contains("Result<impl IntoResponse, AppError>"));
     }
 
     #[test]
     fn user_controller_uses_crate_name() {
         let out = user_controller("my_app");
-        assert!(out.contains("use my_app::{AppError, Cache, Context, ValidatedJson}"));
+        assert!(out.contains("use ::my_app::{AppError, Cache, Context, ValidatedJson}"));
         assert!(out.contains("Result<impl IntoResponse, AppError>"));
     }
 
@@ -2148,7 +2168,7 @@ mod tests {
     #[test]
     fn api_44_uses_crate_name_in_import() {
         let out = make_auth_api_login_controller("my_crate");
-        assert!(out.contains("use my_crate::"));
+        assert!(out.contains("use ::my_crate::"));
     }
     // api_45. imports HeaderMap from axum::http
     #[test]
@@ -2468,7 +2488,7 @@ mod tests {
     #[test]
     fn web_lc_44_uses_crate_name_in_import() {
         let out = make_auth_login_controller("my_crate");
-        assert!(out.contains("use my_crate::"));
+        assert!(out.contains("use ::my_crate::"));
     }
     // web_45. store returns impl IntoResponse (not Result)
     #[test]
@@ -2660,7 +2680,7 @@ mod tests {
     // eh_24. uses provided crate name in AppState import
     #[test]
     fn eh_24_uses_crate_name_for_app_state() {
-        assert!(exception_handler_rs("my_crate").contains("use my_crate::AppState"));
+        assert!(exception_handler_rs("my_crate").contains("use ::my_crate::AppState"));
     }
     // eh_25. no Japanese text
     #[test]

@@ -422,23 +422,13 @@ pub fn auth(api: bool) -> Result<()> {
     inject_mod_decl("src/app/http/requests/mod.rs", "register_request")?;
 
     if api {
-        let use_decl =
-            "use crate::app::http::controllers::auth::{api_login_controller, api_register_controller};";
-        let route_lines = "\n        \
-.route(\"/api/auth/login\",    post(api_login_controller::store))\n        \
-.route(\"/api/auth/refresh\",  post(api_login_controller::refresh))\n        \
-.route(\"/api/auth/logout\",   post(api_login_controller::destroy))\n        \
-.route(\"/api/auth/register\", post(api_register_controller::store))\n        \
-.route(\"/api/me\",            get(api_login_controller::me))";
+        let use_decl = crate::templates::app_files::auth_api_route_use_decl();
+        let route_lines = crate::templates::app_files::auth_api_route_snippet();
         inject_auth_into_routes("src/routes/api.rs", use_decl, route_lines)?;
     } else {
         inject_mod_decl("src/app/http/controllers/mod.rs", "dashboard_controller")?;
-        let use_decl = "use crate::app::http::controllers::auth::{login_controller, register_controller};\nuse crate::app::http::controllers::dashboard_controller;";
-        let route_lines = "\n        \
-.route(\"/login\",    get(login_controller::show).post(login_controller::store))\n        \
-.route(\"/logout\",   post(login_controller::destroy))\n        \
-.route(\"/register\", get(register_controller::show).post(register_controller::store))\n        \
-.route(\"/dashboard\", get(dashboard_controller::index))";
+        let use_decl = crate::templates::app_files::auth_route_use_decl();
+        let route_lines = crate::templates::app_files::auth_route_snippet();
         inject_auth_into_routes("src/routes/web.rs", use_decl, route_lines)?;
     }
 
