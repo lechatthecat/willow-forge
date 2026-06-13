@@ -369,30 +369,34 @@ pub fn auth(api: bool) -> Result<()> {
     }
 
     let auth_mod = "src/app/http/controllers/auth/mod.rs";
-    let auth_mod_decls = if api {
-        "pub mod api_login_controller;\npub mod api_register_controller;\n"
+    let auth_mod_modules: &[&str] = if api {
+        &[
+            "api_login_controller",
+            "api_register_controller",
+            "api_forgot_password_controller",
+            "api_reset_password_controller",
+            "api_verify_email_controller",
+        ]
     } else {
-        "pub mod login_controller;\npub mod register_controller;\npub mod forgot_password_controller;\npub mod reset_password_controller;\npub mod verify_email_controller;\n"
+        &[
+            "login_controller",
+            "register_controller",
+            "forgot_password_controller",
+            "reset_password_controller",
+            "verify_email_controller",
+        ]
     };
+    let auth_mod_decls = auth_mod_modules
+        .iter()
+        .map(|module| format!("pub mod {};\n", module))
+        .collect::<String>();
     if !Path::new(auth_mod).exists() {
         fs::write(auth_mod, auth_mod_decls)
             .with_context(|| format!("Failed to write {}", auth_mod))?;
         println!("Created: {}", auth_mod);
     } else {
-        let existing = fs::read_to_string(auth_mod)
-            .with_context(|| format!("Could not read {}", auth_mod))?;
-        let decl_a = if api { "pub mod api_login_controller;" } else { "pub mod login_controller;" };
-        let decl_b = if api { "pub mod api_register_controller;" } else { "pub mod register_controller;" };
-        let mut updated = existing.clone();
-        if !updated.contains(decl_a) {
-            updated = format!("{}\n{}", updated.trim_end(), format!("\n{}", decl_a));
-        }
-        if !updated.contains(decl_b) {
-            updated = format!("{}\n{}", updated.trim_end(), format!("\n{}", decl_b));
-        }
-        if updated != existing {
-            fs::write(auth_mod, updated)
-                .with_context(|| format!("Could not write {}", auth_mod))?;
+        for module in auth_mod_modules {
+            inject_mod_decl(auth_mod, module)?;
         }
     }
 
@@ -416,6 +420,28 @@ pub fn auth(api: bool) -> Result<()> {
             "src/app/http/controllers/auth/api_register_controller.rs",
             crate::templates::app_files::make_auth_api_register_controller(&crate_name),
         ));
+        files.push((
+            "src/app/http/controllers/auth/api_forgot_password_controller.rs",
+            crate::templates::app_files::make_auth_api_forgot_password_controller(&crate_name),
+        ));
+        files.push((
+            "src/app/http/controllers/auth/api_reset_password_controller.rs",
+            crate::templates::app_files::make_auth_api_reset_password_controller(&crate_name),
+        ));
+        files.push((
+            "src/app/http/controllers/auth/api_verify_email_controller.rs",
+            crate::templates::app_files::make_auth_api_verify_email_controller(&crate_name),
+        ));
+        files.push((
+            "src/app/http/requests/forgot_password_request.rs",
+            crate::templates::app_files::make_auth_forgot_password_request().to_string(),
+        ));
+        files.push((
+            "src/app/http/requests/reset_password_request.rs",
+            crate::templates::app_files::make_auth_reset_password_request().to_string(),
+        ));
+
+        ensure_password_reset_migration()?;
     } else {
         files.push((
             "src/app/http/controllers/auth/login_controller.rs",
@@ -496,6 +522,11 @@ pub fn auth(api: bool) -> Result<()> {
     inject_mod_decl("src/app/http/requests/mod.rs", "register_request")?;
 
     if api {
+        inject_mod_decl("src/app/http/controllers/auth/mod.rs", "api_forgot_password_controller")?;
+        inject_mod_decl("src/app/http/controllers/auth/mod.rs", "api_reset_password_controller")?;
+        inject_mod_decl("src/app/http/controllers/auth/mod.rs", "api_verify_email_controller")?;
+        inject_mod_decl("src/app/http/requests/mod.rs", "forgot_password_request")?;
+        inject_mod_decl("src/app/http/requests/mod.rs", "reset_password_request")?;
         let use_decl = crate::templates::app_files::auth_api_route_use_decl();
         let route_lines = crate::templates::app_files::auth_api_route_snippet();
         inject_auth_into_routes("src/routes/api.rs", use_decl, route_lines)?;
@@ -515,6 +546,98 @@ pub fn auth(api: bool) -> Result<()> {
     Ok(())
 }
 
+fn auth_route_path(line: &str) -> Option<&str> {
+    let trimmed = line.trim();
+    let start = trimmed.find(".route(\"")? + ".route(\"".len();
+    let rest = &trimmed[start..];
+    let end = rest.find('"')?;
+    Some(&rest[..end])
+}
+
+fn missing_auth_route_lines(content: &str, route_lines: &str) -> Vec<String> {
+    route_lines
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .filter(|line| {
+            auth_route_path(line)
+                .map(|path| !content.contains(&format!("\"{}\"", path)))
+                .unwrap_or_else(|| !content.contains(line.trim()))
+        })
+        .map(|line| line.to_string())
+        .collect()
+}
+
+fn auth_modules_from_use_decl(use_decl: &str) -> Vec<String> {
+    let Some(open) = use_decl.find('{') else {
+        return Vec::new();
+    };
+    let Some(close) = use_decl[open + 1..].find('}').map(|idx| open + 1 + idx) else {
+        return Vec::new();
+    };
+
+    use_decl[open + 1..close]
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn merge_auth_use_decl(content: &str, use_decl: &str) -> (String, bool) {
+    let required = auth_modules_from_use_decl(use_decl);
+    if required.is_empty() {
+        return (content.to_string(), false);
+    }
+
+    let mut changed = false;
+    let mut merged_lines = Vec::new();
+
+    for line in content.lines() {
+        if !changed && line.contains("controllers::auth::{") {
+            let Some(open) = line.find('{') else {
+                merged_lines.push(line.to_string());
+                continue;
+            };
+            let Some(close) = line[open + 1..].find('}').map(|idx| open + 1 + idx) else {
+                merged_lines.push(line.to_string());
+                continue;
+            };
+
+            let mut modules = line[open + 1..close]
+                .split(',')
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>();
+
+            for module in &required {
+                if !modules.iter().any(|existing| existing == module) {
+                    modules.push(module.clone());
+                }
+            }
+
+            let updated = format!("{}{}{}", &line[..open + 1], modules.join(", "), &line[close..]);
+            changed = updated != line;
+            merged_lines.push(updated);
+        } else {
+            merged_lines.push(line.to_string());
+        }
+    }
+
+    let mut merged = merged_lines.join("\n");
+    if content.ends_with('\n') {
+        merged.push('\n');
+    }
+
+    (merged, changed)
+}
+
+fn has_auth_use_decl(content: &str) -> bool {
+    content
+        .lines()
+        .any(|line| line.trim_start().starts_with("use ") && line.contains("controllers::auth::"))
+}
+
 fn inject_auth_into_routes(routes_path: &str, use_decl: &str, route_lines: &str) -> Result<()> {
     let path = Path::new(routes_path);
     if !path.exists() {
@@ -522,44 +645,66 @@ fn inject_auth_into_routes(routes_path: &str, use_decl: &str, route_lines: &str)
         return Ok(());
     }
 
-    let content = fs::read_to_string(path)
+    let mut content = fs::read_to_string(path)
         .with_context(|| format!("Could not read {}", routes_path))?;
 
-    if content.contains("controllers::auth::") {
+    let mut use_decl_changed = false;
+    if has_auth_use_decl(&content) {
+        let (merged, changed) = merge_auth_use_decl(&content, use_decl);
+        content = merged;
+        use_decl_changed = changed;
+    }
+
+    let missing_route_lines = missing_auth_route_lines(&content, route_lines);
+    if missing_route_lines.is_empty() && !use_decl_changed {
         println!("  Routes already present in {} - skipping.", routes_path);
         return Ok(());
     }
 
-    let content = if content.contains("routing::get,") && !content.contains("routing::{get, post}") {
+    let content = if !missing_route_lines.is_empty()
+        && content.contains("routing::get,")
+        && !content.contains("routing::{get, post}")
+    {
         content.replace("routing::get,", "routing::{get, post},")
-    } else if content.contains("routing::get}") && !content.contains("routing::{get, post}") {
+    } else if !missing_route_lines.is_empty()
+        && content.contains("routing::get}")
+        && !content.contains("routing::{get, post}")
+    {
         content.replace("routing::get}", "routing::{get, post}}")
     } else {
         content
     };
 
-    let fn_marker = "\npub fn routes";
-    let fn_pos = content
-        .find(fn_marker)
-        .ok_or_else(|| anyhow::anyhow!("Could not find `pub fn routes` in {}", routes_path))?;
+    let content = if has_auth_use_decl(&content) {
+        content
+    } else {
+        let fn_marker = "\npub fn routes";
+        let fn_pos = content
+            .find(fn_marker)
+            .ok_or_else(|| anyhow::anyhow!("Could not find `pub fn routes` in {}", routes_path))?;
 
-    let content = format!(
-        "{}\n{}\n{}",
-        &content[..fn_pos],
-        use_decl,
-        &content[fn_pos..]
-    );
+        format!(
+            "{}\n{}\n{}",
+            &content[..fn_pos],
+            use_decl,
+            &content[fn_pos..]
+        )
+    };
 
-    let close_pos = content
-        .rfind("\n}")
-        .ok_or_else(|| anyhow::anyhow!("Could not find closing brace in {}", routes_path))?;
+    let content = if missing_route_lines.is_empty() {
+        content
+    } else {
+        let close_pos = content
+            .rfind("\n}")
+            .ok_or_else(|| anyhow::anyhow!("Could not find closing brace in {}", routes_path))?;
 
-    let content = format!(
-        "{}{}{}",
-        &content[..close_pos],
-        route_lines,
-        &content[close_pos..]
-    );
+        format!(
+            "{}\n{}{}",
+            &content[..close_pos],
+            missing_route_lines.join("\n"),
+            &content[close_pos..]
+        )
+    };
 
     fs::write(path, &content)
         .with_context(|| format!("Could not write {}", routes_path))?;
@@ -992,7 +1137,16 @@ mod tests {
         fs::write(&f, api_content()).unwrap();
         for _ in 0..5 { inject_api(&f); }
         let c = fs::read_to_string(&f).unwrap();
-        for route in &["/api/auth/login", "/api/auth/refresh", "/api/auth/logout", "/api/auth/register"] {
+        for route in &[
+            "/api/auth/login",
+            "/api/auth/refresh",
+            "/api/auth/logout",
+            "/api/auth/register",
+            "/api/auth/forgot-password",
+            "/api/auth/reset-password",
+            "/api/auth/email/verify/{id}/{hash}",
+            "/api/auth/email/verification-notification",
+        ] {
             assert_eq!(c.matches(route).count(), 1, "{} must appear exactly once", route);
         }
     }
@@ -1063,14 +1217,14 @@ mod tests {
             assert!(c.contains(r), "missing {}", r);
         }
     }
-    // 55. already has controllers::auth:: marker ↁEskip, Ok returned
+    // 55. comment marker does not block injection
     #[test]
-    fn api_55_skip_when_marker_present() {
+    fn api_55_comment_marker_does_not_block_injection() {
         let d = tmp(); let f = d.path().join("api.rs");
         let c = format!("{}\n// controllers::auth:: here", api_content());
         fs::write(&f, &c).unwrap();
         assert!(inject_auth_into_routes(f.to_str().unwrap(), api_use(), api_routes()).is_ok());
-        assert!(!fs::read_to_string(&f).unwrap().contains("/api/auth/login"));
+        assert!(fs::read_to_string(&f).unwrap().contains("/api/auth/login"));
     }
     // 56. web routes NOT present in api.rs result
     #[test]
@@ -1110,8 +1264,51 @@ mod tests {
         let c = "use axum::{routing::{get, post}, Router};\nuse std::sync::Arc;\nuse my_app::AppState;\nuse crate::app::http::controllers::{user_controller, status_controller};\n\npub fn routes() -> Router<Arc<AppState>> {\n    Router::new()\n        .route(\"/api/users\", get(user_controller::index).post(user_controller::store))\n        .route(\"/api/status\", get(status_controller::index))\n        .route(\"/api/users/mock\", get(user_controller::mock))\n}\n";
         fs::write(&f, c).unwrap(); inject_api(&f);
         let c = fs::read_to_string(&f).unwrap();
-        for r in &["/api/users", "/api/status", "/api/auth/login", "/api/auth/refresh", "/api/auth/logout", "/api/auth/register"] {
+        for r in &[
+            "/api/users",
+            "/api/status",
+            "/api/auth/login",
+            "/api/auth/refresh",
+            "/api/auth/logout",
+            "/api/auth/register",
+            "/api/auth/forgot-password",
+            "/api/auth/reset-password",
+            "/api/auth/email/verify/{id}/{hash}",
+            "/api/auth/email/verification-notification",
+        ] {
             assert!(c.contains(r), "missing {}", r);
+        }
+    }
+
+    #[test]
+    fn api_61_existing_auth_routes_receive_new_api_parity_routes() {
+        let d = tmp(); let f = d.path().join("api.rs");
+        let old_use = "use crate::app::http::controllers::auth::{api_login_controller, api_register_controller};";
+        let old_routes = "\n        .route(\"/api/auth/login\", post(api_login_controller::store))\n        .route(\"/api/auth/refresh\", post(api_login_controller::refresh))\n        .route(\"/api/auth/logout\", post(api_login_controller::destroy))\n        .route(\"/api/auth/register\", post(api_register_controller::store))\n        .route(\"/api/me\", get(api_login_controller::me))";
+        let mut c = api_content().replace("routing::get,", "routing::{get, post},");
+        c = c.replace("\npub fn routes", &format!("\n{}\npub fn routes", old_use));
+        let close_pos = c.rfind("\n}").unwrap();
+        c = format!("{}{}{}", &c[..close_pos], old_routes, &c[close_pos..]);
+        fs::write(&f, c).unwrap();
+
+        inject_api(&f);
+
+        let c = fs::read_to_string(&f).unwrap();
+        for route in &[
+            "/api/auth/login",
+            "/api/auth/forgot-password",
+            "/api/auth/reset-password",
+            "/api/auth/email/verify/{id}/{hash}",
+            "/api/auth/email/verification-notification",
+        ] {
+            assert_eq!(c.matches(route).count(), 1, "{} must appear exactly once", route);
+        }
+        for module in &[
+            "api_forgot_password_controller",
+            "api_reset_password_controller",
+            "api_verify_email_controller",
+        ] {
+            assert!(c.contains(module), "missing {}", module);
         }
     }
 
@@ -1275,14 +1472,14 @@ mod tests {
         fs::write(&f, web_content()).unwrap(); inject_web(&f);
         assert!(fs::read_to_string(&f).unwrap().contains("pub fn routes"));
     }
-    // 83. already has controllers::auth:: ↁEskip, Ok
+    // 83. comment marker does not block injection
     #[test]
-    fn web_83_skip_when_marker_present() {
+    fn web_83_comment_marker_does_not_block_injection() {
         let d = tmp(); let f = d.path().join("web.rs");
         let c = format!("{}\n// controllers::auth:: here", web_content());
         fs::write(&f, &c).unwrap();
         assert!(inject_auth_into_routes(f.to_str().unwrap(), web_use(), web_routes()).is_ok());
-        assert!(!fs::read_to_string(&f).unwrap().contains("\"/login\""));
+        assert!(fs::read_to_string(&f).unwrap().contains("\"/login\""));
     }
     // 84. multiple existing routes all preserved
     #[test]
@@ -2729,11 +2926,19 @@ mod tests {
 
             assert!(file_exists("src/app/http/controllers/auth/api_login_controller.rs"));
             assert!(file_exists("src/app/http/controllers/auth/api_register_controller.rs"));
+            assert!(file_exists("src/app/http/controllers/auth/api_forgot_password_controller.rs"));
+            assert!(file_exists("src/app/http/controllers/auth/api_reset_password_controller.rs"));
+            assert!(file_exists("src/app/http/controllers/auth/api_verify_email_controller.rs"));
+            assert!(file_exists("src/app/http/requests/forgot_password_request.rs"));
+            assert!(file_exists("src/app/http/requests/reset_password_request.rs"));
             assert!(!file_exists("src/app/http/controllers/dashboard_controller.rs"),
                 "api auth must not create DashboardController");
             let api_rs = read_file("src/routes/api.rs");
             for r in &["/api/auth/login", "/api/auth/refresh",
-                        "/api/auth/logout", "/api/auth/register", "/api/me"] {
+                        "/api/auth/logout", "/api/auth/register",
+                        "/api/auth/forgot-password", "/api/auth/reset-password",
+                        "/api/auth/email/verify/{id}/{hash}",
+                        "/api/auth/email/verification-notification", "/api/me"] {
                 assert!(api_rs.contains(r), "api.rs missing {}", r);
             }
             // web.rs must be untouched (no login route)
@@ -3079,9 +3284,11 @@ mod tests {
             for r in &["/login", "/logout", "/register", "/dashboard"] {
                 assert!(web.contains(r), "step2: web.rs missing {}", r);
             }
-            // Auth/mod.rs must contain all 4 controller declarations
+            // Auth/mod.rs must contain both API and web controller declarations
             let auth_mod = read_file("src/app/http/controllers/auth/mod.rs");
             for decl in &["api_login_controller", "api_register_controller",
+                           "api_forgot_password_controller", "api_reset_password_controller",
+                           "api_verify_email_controller",
                            "login_controller", "register_controller"] {
                 assert!(auth_mod.contains(&format!("pub mod {};", decl)),
                     "Auth/mod.rs missing {}", decl);

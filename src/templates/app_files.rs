@@ -822,7 +822,7 @@ pub fn view_welcome() -> &'static str {
   -d 'invalid' | jq</code></pre>
 
 <h2>JWT API Auth (after <code>willow-forge make:auth --api</code>)</h2>
-<p>Scaffold JWT-based auth (login, refresh, logout, register  EJSON only, no views):</p>
+<p>Scaffold JWT-based auth (register, login, password reset, email verification, refresh, logout; JSON only, no views):</p>
 <pre><code>willow-forge make:auth --api</code></pre>
 <p>Routes injected into <code>src/routes/api.rs</code>. Restart the server to activate them.</p>
 <table>
@@ -832,6 +832,10 @@ pub fn view_welcome() -> &'static str {
     <tbody>
         <tr><td><code>POST</code></td><td><code>/api/auth/register</code></td><td>Create account, returns JWT</td></tr>
         <tr><td><code>POST</code></td><td><code>/api/auth/login</code></td><td>Authenticate, returns JWT</td></tr>
+        <tr><td><code>POST</code></td><td><code>/api/auth/forgot-password</code></td><td>Email a password reset token</td></tr>
+        <tr><td><code>POST</code></td><td><code>/api/auth/reset-password</code></td><td>Reset password with emailed token</td></tr>
+        <tr><td><code>GET</code></td><td><code>/api/auth/email/verify/{id}/{hash}</code></td><td>Confirm email address</td></tr>
+        <tr><td><code>POST</code></td><td><code>/api/auth/email/verification-notification</code></td><td>Resend verification email (requires JWT)</td></tr>
         <tr><td><code>POST</code></td><td><code>/api/auth/refresh</code></td><td>Rotate JWT (old token blacklisted)</td></tr>
         <tr><td><code>POST</code></td><td><code>/api/auth/logout</code></td><td>Blacklist token, invalidate session</td></tr>
         <tr><td><code>GET</code></td><td><code>/api/me</code></td><td>Current user info (requires JWT)</td></tr>
@@ -848,6 +852,20 @@ pub fn view_welcome() -> &'static str {
   -H "Content-Type: application/json" \
   -d '{"email":"alice@example.com","password":"secret123"}' | jq -r '.token')
 echo $TOKEN</code></pre>
+
+<h3>Forgot password</h3>
+<pre><code>curl -s -X POST http://localhost:3000/api/auth/forgot-password \
+  -H "Content-Type: application/json" \
+  -d '{"email":"alice@example.com"}' | jq</code></pre>
+
+<h3>Reset password</h3>
+<pre><code>curl -s -X POST http://localhost:3000/api/auth/reset-password \
+  -H "Content-Type: application/json" \
+  -d '{"email":"alice@example.com","token":"TOKEN_FROM_EMAIL","password":"newsecret123","password_confirmation":"newsecret123"}' | jq</code></pre>
+
+<h3>Resend verification email</h3>
+<pre><code>curl -s -X POST http://localhost:3000/api/auth/email/verification-notification \
+  -H "Authorization: Bearer $TOKEN" | jq</code></pre>
 
 <h3>Refresh</h3>
 <pre><code>NEW_TOKEN=$(curl -s -X POST http://localhost:3000/api/auth/refresh \
@@ -1988,6 +2006,301 @@ pub async fn send_verification_email(ctx: &Context, user: &User) {{
     )
 }
 
+pub fn make_auth_api_forgot_password_controller(name: &str) -> String {
+    format!(
+        r#"use axum::{{Json, response::IntoResponse}};
+use serde_json::json;
+
+use ::{name}::{{AppError, Context, Email, Hash, Throttle, ValidatedJson, random_token}};
+use crate::app::http::requests::forgot_password_request::ForgotPasswordRequest;
+
+/// How long a password reset token stays valid, in minutes.
+const TOKEN_TTL_MINUTES: i64 = 60;
+
+/// Max reset requests allowed per email within the throttle window.
+const MAX_ATTEMPTS: u64 = 5;
+/// Throttle window, in seconds.
+const THROTTLE_WINDOW_SECS: i64 = 60;
+
+/// POST /api/auth/forgot-password
+pub async fn store(
+    ctx: Context,
+    ValidatedJson(req): ValidatedJson<ForgotPasswordRequest>,
+) -> Result<impl IntoResponse, AppError> {{
+    // Same response whether or not the email exists, to avoid leaking which
+    // addresses are registered.
+    let neutral = "If that email address exists in our records, a password reset link has been sent.";
+
+    // Throttle per email so the endpoint can't be used to bomb an inbox. When
+    // the limit is hit, keep the neutral response and skip sending.
+    let throttle_key = format!("throttle:forgot-password:{{}}", req.email);
+    if Throttle::too_many(&ctx, &throttle_key, MAX_ATTEMPTS, THROTTLE_WINDOW_SECS)
+        .await
+        .unwrap_or(false)
+    {{
+        return Ok(Json(json!({{ "message": neutral }})));
+    }}
+
+    if let Ok(Some(_user)) =
+        crate::app::models::user::User::find_by_email(&ctx.state.services.db, &req.email).await
+    {{
+        let token = random_token();
+        if let Ok(hashed_token) = Hash::make(&token) {{
+            let stored = sqlx::query(
+                "INSERT INTO password_reset_tokens (email, token) VALUES ($1, $2) \
+                 ON CONFLICT (email) DO UPDATE SET token = EXCLUDED.token, created_at = NOW()",
+            )
+            .bind(&req.email)
+            .bind(&hashed_token)
+            .execute(&ctx.state.services.db)
+            .await;
+
+            if stored.is_ok() {{
+                let base = std::env::var("APP_URL")
+                    .unwrap_or_else(|_| "http://localhost:3000".to_string());
+                let link = format!(
+                    "{{}}/api/auth/reset-password?token={{}}",
+                    base.trim_end_matches('/'),
+                    token,
+                );
+                let text = format!(
+                    "You requested a password reset.\n\nUse this token to reset your password \
+                     (valid for {{}} minutes):\n{{}}\n\nEndpoint: POST {{}}\n\nIf you did not request this, ignore this email.",
+                    TOKEN_TTL_MINUTES, token, link,
+                );
+                let html = format!(
+                    "<p>You requested a password reset.</p>\
+                     <p>Use this token to reset your password (valid for {{}} minutes):</p>\
+                     <p><code>{{}}</code></p>\
+                     <p>Endpoint: <code>POST {{}}</code></p>\
+                     <p>If you did not request this, you can ignore this email.</p>",
+                    TOKEN_TTL_MINUTES, token, link,
+                );
+                let email = Email::new(req.email.as_str(), "Reset your password")
+                    .text(text)
+                    .html(html);
+                if let Err(e) = ctx.state.services.mailer.send(&email).await {{
+                    tracing::error!("Failed to send password reset email: {{}}", e);
+                }}
+            }}
+        }}
+    }}
+
+    Ok(Json(json!({{ "message": neutral }})))
+}}
+"#,
+        name = name
+    )
+}
+
+pub fn make_auth_api_reset_password_controller(name: &str) -> String {
+    format!(
+        r#"use axum::{{Json, response::IntoResponse}};
+use chrono::{{DateTime, Duration, Utc}};
+use serde_json::json;
+use sqlx::FromRow;
+
+use ::{name}::{{AppError, Context, Hash, ValidatedJson}};
+use crate::app::http::requests::reset_password_request::ResetPasswordRequest;
+
+/// How long a password reset token stays valid, in minutes.
+const TOKEN_TTL_MINUTES: i64 = 60;
+
+#[derive(FromRow)]
+struct ResetRow {{
+    token: String,
+    created_at: DateTime<Utc>,
+}}
+
+/// POST /api/auth/reset-password
+pub async fn store(
+    ctx: Context,
+    ValidatedJson(req): ValidatedJson<ResetPasswordRequest>,
+) -> Result<impl IntoResponse, AppError> {{
+    let invalid = "This password reset token is invalid or has expired.";
+
+    let row = sqlx::query_as::<_, ResetRow>(
+        "SELECT token, created_at FROM password_reset_tokens WHERE email = $1 LIMIT 1",
+    )
+    .bind(&req.email)
+    .fetch_optional(&ctx.state.services.db)
+    .await?;
+
+    let Some(row) = row else {{
+        return Err(AppError::Http(422, invalid.to_string()));
+    }};
+
+    let expired = Utc::now() - row.created_at > Duration::minutes(TOKEN_TTL_MINUTES);
+    if expired || !Hash::check(&req.token, &row.token) {{
+        return Err(AppError::Http(422, invalid.to_string()));
+    }}
+
+    let hashed = Hash::make(&req.password)?;
+    sqlx::query("UPDATE users SET password = $1 WHERE email = $2")
+        .bind(&hashed)
+        .bind(&req.email)
+        .execute(&ctx.state.services.db)
+        .await?;
+
+    sqlx::query("DELETE FROM password_reset_tokens WHERE email = $1")
+        .bind(&req.email)
+        .execute(&ctx.state.services.db)
+        .await?;
+
+    Ok(Json(json!({{ "message": "Your password has been reset." }})))
+}}
+"#,
+        name = name
+    )
+}
+
+pub fn make_auth_api_verify_email_controller(name: &str) -> String {
+    format!(
+        r#"use axum::{{
+    extract::{{Path, Query}},
+    http::StatusCode,
+    response::{{IntoResponse, Response}},
+    Json,
+}};
+use chrono::{{Duration, Utc}};
+use serde::Deserialize;
+use serde_json::json;
+
+use ::{name}::{{
+    AppError, Context, Email, JwtUser, Throttle, email_verification_hash, sign, verify_signature,
+}};
+use crate::app::models::user::User;
+
+/// How long a verification link stays valid, in minutes.
+const VERIFY_TTL_MINUTES: i64 = 60;
+/// Max resend requests allowed per user within the throttle window.
+const MAX_RESEND_ATTEMPTS: u64 = 3;
+/// Throttle window, in seconds.
+const RESEND_WINDOW_SECS: i64 = 60;
+
+/// Signing key for verification links. Reuses the app's JWT_SECRET.
+fn signing_key() -> String {{
+    std::env::var("JWT_SECRET").unwrap_or_default()
+}}
+
+/// Query parameters appended to a verification link: `?expires=..&signature=..`.
+#[derive(Deserialize)]
+pub struct VerifyQuery {{
+    pub expires: i64,
+    pub signature: String,
+}}
+
+/// GET /api/auth/email/verify/{{id}}/{{hash}}
+pub async fn verify(
+    ctx: Context,
+    Path((id, hash)): Path<(i32, String)>,
+    Query(query): Query<VerifyQuery>,
+) -> Response {{
+    let forbidden = || {{
+        (
+            StatusCode::FORBIDDEN,
+            Json(json!({{ "message": "Invalid or expired verification link." }})),
+        )
+            .into_response()
+    }};
+
+    // Reject expired links.
+    if Utc::now().timestamp() > query.expires {{
+        return forbidden();
+    }}
+
+    // Reject tampered links: signature must match `id.hash.expires`.
+    let payload = format!("{{}}.{{}}.{{}}", id, hash, query.expires);
+    if !verify_signature(&payload, &query.signature, &signing_key()) {{
+        return forbidden();
+    }}
+
+    let user = match User::find(&ctx.state.services.db, id).await {{
+        Ok(Some(u)) => u,
+        _ => return forbidden(),
+    }};
+
+    if email_verification_hash(&user.email) != hash {{
+        return forbidden();
+    }}
+
+    if !user.is_verified() {{
+        let _ = sqlx::query(
+            "UPDATE users SET email_verified_at = NOW() WHERE id = $1 AND email_verified_at IS NULL",
+        )
+        .bind(id)
+        .execute(&ctx.state.services.db)
+        .await;
+    }}
+
+    Json(json!({{ "message": "Email verified." }})).into_response()
+}}
+
+/// POST /api/auth/email/verification-notification
+pub async fn resend(
+    auth: JwtUser,
+    ctx: Context,
+) -> Result<Response, AppError> {{
+    // Throttle per user so resend can't be used to bomb an inbox.
+    let throttle_key = format!("throttle:verify-resend:{{}}", auth.id);
+    if Throttle::too_many(&ctx, &throttle_key, MAX_RESEND_ATTEMPTS, RESEND_WINDOW_SECS)
+        .await
+        .unwrap_or(false)
+    {{
+        return Ok((
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({{ "message": "Please wait a moment before requesting another verification email." }})),
+        )
+            .into_response());
+    }}
+
+    if let Some(user) = User::find(&ctx.state.services.db, auth.id as i32).await? {{
+        if !user.is_verified() {{
+            send_verification_email(&ctx, &user).await;
+            return Ok(Json(json!({{
+                "message": "A fresh verification link has been sent to your email address."
+            }}))
+            .into_response());
+        }}
+    }}
+
+    Ok(Json(json!({{ "message": "Your email address is already verified." }})).into_response())
+}}
+
+/// Build and send the verification email for `user`. Best-effort: failures are
+/// logged but do not surface to the caller.
+pub async fn send_verification_email(ctx: &Context, user: &User) {{
+    let base = std::env::var("APP_URL").unwrap_or_else(|_| "http://localhost:3000".to_string());
+    let hash = email_verification_hash(&user.email);
+    let expires = (Utc::now() + Duration::minutes(VERIFY_TTL_MINUTES)).timestamp();
+    let payload = format!("{{}}.{{}}.{{}}", user.id, hash, expires);
+    let signature = sign(&payload, &signing_key());
+    let link = format!(
+        "{{}}/api/auth/email/verify/{{}}/{{}}?expires={{}}&signature={{}}",
+        base.trim_end_matches('/'), user.id, hash, expires, signature,
+    );
+
+    let text = format!(
+        "Welcome! Please confirm your email address by opening this link:\n{{}}\n",
+        link,
+    );
+    let html = format!(
+        "<p>Welcome! Please confirm your email address.</p>\
+         <p><a href=\"{{}}\">Verify email address</a></p>",
+        link,
+    );
+    let email = Email::new(user.email.as_str(), "Verify your email address")
+        .text(text)
+        .html(html);
+    if let Err(e) = ctx.state.services.mailer.send(&email).await {{
+        tracing::error!("Failed to send verification email: {{}}", e);
+    }}
+}}
+"#,
+        name = name
+    )
+}
+
 pub fn view_auth_verify_email() -> &'static str {
     r#"{% extends "layouts.app" %}
 
@@ -2125,6 +2438,9 @@ pub async fn store(
         other => AppError::Database(other),
     }})?;
 
+    // Send the email-verification link; best-effort, never blocks signup.
+    crate::app::http::controllers::auth::api_verify_email_controller::send_verification_email(&ctx, &u).await;
+
     let token = Jwt::encode(u.id as i64)?;
 
     Ok((
@@ -2141,11 +2457,11 @@ pub async fn store(
 }
 
 pub fn auth_api_route_use_decl() -> &'static str {
-    "use crate::app::http::controllers::auth::{api_login_controller, api_register_controller};"
+    "use crate::app::http::controllers::auth::{api_forgot_password_controller, api_login_controller, api_register_controller, api_reset_password_controller, api_verify_email_controller};"
 }
 
 pub fn auth_api_route_snippet() -> &'static str {
-    "\n        .route(\"/api/auth/login\",    post(api_login_controller::store))\n        .route(\"/api/auth/refresh\",  post(api_login_controller::refresh))\n        .route(\"/api/auth/logout\",   post(api_login_controller::destroy))\n        .route(\"/api/auth/register\", post(api_register_controller::store))\n        .route(\"/api/me\",            get(api_login_controller::me))"
+    "\n        .route(\"/api/auth/login\", post(api_login_controller::store))\n        .route(\"/api/auth/refresh\", post(api_login_controller::refresh))\n        .route(\"/api/auth/logout\", post(api_login_controller::destroy))\n        .route(\"/api/auth/register\", post(api_register_controller::store))\n        .route(\"/api/auth/forgot-password\", post(api_forgot_password_controller::store))\n        .route(\"/api/auth/reset-password\", post(api_reset_password_controller::store))\n        .route(\"/api/auth/email/verify/{id}/{hash}\", get(api_verify_email_controller::verify))\n        .route(\"/api/auth/email/verification-notification\", post(api_verify_email_controller::resend))\n        .route(\"/api/me\", get(api_login_controller::me))"
 }
 
 fn pascal_to_snake(name: &str) -> String {
@@ -2546,6 +2862,9 @@ mod tests {
             ("make_auth_register_controller", &make_auth_register_controller("my_app")),
             ("make_auth_api_login_controller", &make_auth_api_login_controller("my_app")),
             ("make_auth_api_register_controller", &make_auth_api_register_controller("my_app")),
+            ("make_auth_api_forgot_password_controller", &make_auth_api_forgot_password_controller("my_app")),
+            ("make_auth_api_reset_password_controller", &make_auth_api_reset_password_controller("my_app")),
+            ("make_auth_api_verify_email_controller", &make_auth_api_verify_email_controller("my_app")),
         ];
         for (label, out) in cases {
             assert!(!out.contains("#[path"),
@@ -3517,6 +3836,93 @@ mod tests {
         let out = make_auth_api_register_controller("my_app");
         assert!(!out.chars().any(|c| ('\u{3040}'..='\u{30FF}').contains(&c)
             || ('\u{4E00}'..='\u{9FFF}').contains(&c)));
+    }
+
+    // -- make_auth_api password reset + email verification --------------------
+
+    #[test]
+    fn api_parity_01_route_use_decl_has_new_controllers() {
+        let out = auth_api_route_use_decl();
+        for module in &[
+            "api_forgot_password_controller",
+            "api_reset_password_controller",
+            "api_verify_email_controller",
+        ] {
+            assert!(out.contains(module), "missing {}", module);
+        }
+    }
+
+    #[test]
+    fn api_parity_02_route_snippet_has_reset_and_verification_routes() {
+        let out = auth_api_route_snippet();
+        for route in &[
+            "/api/auth/forgot-password",
+            "/api/auth/reset-password",
+            "/api/auth/email/verify/{id}/{hash}",
+            "/api/auth/email/verification-notification",
+        ] {
+            assert!(out.contains(route), "missing {}", route);
+        }
+    }
+
+    #[test]
+    fn api_parity_03_forgot_password_controller_is_json_only() {
+        let out = make_auth_api_forgot_password_controller("my_app");
+        assert!(out.contains("ValidatedJson(req): ValidatedJson<ForgotPasswordRequest>"));
+        assert!(out.contains("Json(json!"));
+        assert!(out.contains("INSERT INTO password_reset_tokens"));
+        assert!(out.contains("Throttle::too_many"));
+        assert!(out.contains("random_token()"));
+        assert!(!out.contains("Redirect::"));
+        assert!(!out.contains("view("));
+    }
+
+    #[test]
+    fn api_parity_04_reset_password_controller_updates_and_clears_token() {
+        let out = make_auth_api_reset_password_controller("my_app");
+        assert!(out.contains("ValidatedJson(req): ValidatedJson<ResetPasswordRequest>"));
+        assert!(out.contains("Hash::check"));
+        assert!(out.contains("Duration::minutes(TOKEN_TTL_MINUTES)"));
+        assert!(out.contains("UPDATE users SET password"));
+        assert!(out.contains("DELETE FROM password_reset_tokens"));
+        assert!(out.contains("AppError::Http(422"));
+        assert!(!out.contains("Redirect::"));
+        assert!(!out.contains("view("));
+    }
+
+    #[test]
+    fn api_parity_05_verify_email_controller_is_signed_json_flow() {
+        let out = make_auth_api_verify_email_controller("my_app");
+        assert!(out.contains("pub async fn verify"));
+        assert!(out.contains("pub async fn resend"));
+        assert!(out.contains("send_verification_email"));
+        assert!(out.contains("email_verification_hash"));
+        assert!(out.contains("verify_signature(&payload"));
+        assert!(out.contains("sign(&payload"));
+        assert!(out.contains("UPDATE users SET email_verified_at = NOW()"));
+        assert!(out.contains("Json(json!"));
+        assert!(out.contains("JwtUser"));
+        assert!(out.contains("Throttle::too_many"));
+        assert!(!out.contains("Redirect::"));
+        assert!(!out.contains("view("));
+    }
+
+    #[test]
+    fn api_parity_06_api_register_sends_verification_email() {
+        let out = make_auth_api_register_controller("my_app");
+        assert!(out.contains("api_verify_email_controller::send_verification_email"));
+    }
+
+    #[test]
+    fn api_parity_07_new_api_templates_have_no_japanese_text() {
+        for out in &[
+            make_auth_api_forgot_password_controller("my_app"),
+            make_auth_api_reset_password_controller("my_app"),
+            make_auth_api_verify_email_controller("my_app"),
+        ] {
+            assert!(!out.chars().any(|c| ('\u{3040}'..='\u{30FF}').contains(&c)
+                || ('\u{4E00}'..='\u{9FFF}').contains(&c)));
+        }
     }
 
     // ── make_auth_dashboard_controller (8) ────────────────────────────────────
