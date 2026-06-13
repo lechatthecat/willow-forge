@@ -282,6 +282,41 @@ fn read_crate_name() -> Result<String> {
     anyhow::bail!("Could not find package.name in Cargo.toml")
 }
 
+fn ensure_password_reset_migration() -> Result<()> {
+    let base = Path::new("src/database/migrations");
+    if !base.exists() {
+        fs::create_dir_all(base).with_context(|| "Failed to create database/migrations")?;
+    }
+
+    let already_exists = fs::read_dir(base)
+        .with_context(|| "Failed to read database/migrations")?
+        .filter_map(|e| e.ok())
+        .any(|e| {
+            let name = e.file_name();
+            let s = name.to_string_lossy();
+            s.contains("create_password_reset_tokens") && s.ends_with(".up.sql")
+        });
+
+    if already_exists {
+        return Ok(());
+    }
+
+    let now = chrono::Utc::now();
+    let timestamp = now.format("%Y%m%d%H%M%S");
+
+    let up_path = base.join(format!("{}_create_password_reset_tokens_table.up.sql", timestamp));
+    let down_path = base.join(format!("{}_create_password_reset_tokens_table.down.sql", timestamp));
+
+    fs::write(&up_path, crate::templates::app_files::password_reset_migration_up_sql())
+        .with_context(|| format!("Failed to write {}", up_path.display()))?;
+    fs::write(&down_path, crate::templates::app_files::password_reset_migration_down_sql())
+        .with_context(|| format!("Failed to write {}", down_path.display()))?;
+
+    println!("Created: {}", up_path.display());
+    println!("Created: {}", down_path.display());
+    Ok(())
+}
+
 fn ensure_users_migration() -> Result<()> {
     let base = Path::new("src/database/migrations");
     if !base.exists() {
@@ -336,7 +371,7 @@ pub fn auth(api: bool) -> Result<()> {
     let auth_mod_decls = if api {
         "pub mod api_login_controller;\npub mod api_register_controller;\n"
     } else {
-        "pub mod login_controller;\npub mod register_controller;\n"
+        "pub mod login_controller;\npub mod register_controller;\npub mod forgot_password_controller;\npub mod reset_password_controller;\n"
     };
     if !Path::new(auth_mod).exists() {
         fs::write(auth_mod, auth_mod_decls)
@@ -394,6 +429,22 @@ pub fn auth(api: bool) -> Result<()> {
             crate::templates::app_files::make_auth_dashboard_controller(&crate_name),
         ));
         files.push((
+            "src/app/http/controllers/auth/forgot_password_controller.rs",
+            crate::templates::app_files::make_auth_forgot_password_controller(&crate_name),
+        ));
+        files.push((
+            "src/app/http/controllers/auth/reset_password_controller.rs",
+            crate::templates::app_files::make_auth_reset_password_controller(&crate_name),
+        ));
+        files.push((
+            "src/app/http/requests/forgot_password_request.rs",
+            crate::templates::app_files::make_auth_forgot_password_request().to_string(),
+        ));
+        files.push((
+            "src/app/http/requests/reset_password_request.rs",
+            crate::templates::app_files::make_auth_reset_password_request().to_string(),
+        ));
+        files.push((
             "src/resources/views/auth/login.jinja.html",
             crate::templates::app_files::view_auth_login().to_string(),
         ));
@@ -402,9 +453,19 @@ pub fn auth(api: bool) -> Result<()> {
             crate::templates::app_files::view_auth_register().to_string(),
         ));
         files.push((
+            "src/resources/views/auth/forgot-password.jinja.html",
+            crate::templates::app_files::view_auth_forgot_password().to_string(),
+        ));
+        files.push((
+            "src/resources/views/auth/reset-password.jinja.html",
+            crate::templates::app_files::view_auth_reset_password().to_string(),
+        ));
+        files.push((
             "src/resources/views/dashboard.jinja.html",
             crate::templates::app_files::view_auth_dashboard().to_string(),
         ));
+
+        ensure_password_reset_migration()?;
     }
 
     for (path, content) in &files {
@@ -427,6 +488,10 @@ pub fn auth(api: bool) -> Result<()> {
         inject_auth_into_routes("src/routes/api.rs", use_decl, route_lines)?;
     } else {
         inject_mod_decl("src/app/http/controllers/mod.rs", "dashboard_controller")?;
+        inject_mod_decl("src/app/http/controllers/auth/mod.rs", "forgot_password_controller")?;
+        inject_mod_decl("src/app/http/controllers/auth/mod.rs", "reset_password_controller")?;
+        inject_mod_decl("src/app/http/requests/mod.rs", "forgot_password_request")?;
+        inject_mod_decl("src/app/http/requests/mod.rs", "reset_password_request")?;
         let use_decl = crate::templates::app_files::auth_route_use_decl();
         let route_lines = crate::templates::app_files::auth_route_snippet();
         inject_auth_into_routes("src/routes/web.rs", use_decl, route_lines)?;
@@ -513,17 +578,19 @@ mod tests {
         "use axum::{routing::get, Router};\nuse my_app::AppState;\nuse std::sync::Arc;\n\npub fn routes() -> Router<Arc<AppState>> {\n    Router::new()\n        .route(\"/\", get(home))\n}\n".into()
     }
 
+    // Delegate to the real template functions so these tests always track the
+    // snippets that `make auth` actually injects.
     fn api_use() -> &'static str {
-        "use crate::app::http::controllers::auth::{api_login_controller, api_register_controller};"
+        crate::templates::app_files::auth_api_route_use_decl()
     }
     fn api_routes() -> &'static str {
-        "\n        .route(\"/api/auth/login\",    post(api_login_controller::store))\n        .route(\"/api/auth/refresh\",  post(api_login_controller::refresh))\n        .route(\"/api/auth/logout\",   post(api_login_controller::destroy))\n        .route(\"/api/auth/register\", post(api_register_controller::store))\n        .route(\"/api/me\",            get(api_login_controller::me))"
+        crate::templates::app_files::auth_api_route_snippet()
     }
     fn web_use() -> &'static str {
-        "use crate::app::http::controllers::auth::{login_controller, register_controller};\nuse crate::app::http::controllers::dashboard_controller;"
+        crate::templates::app_files::auth_route_use_decl()
     }
     fn web_routes() -> &'static str {
-        "\n        .route(\"/login\",    get(login_controller::show).post(login_controller::store))\n        .route(\"/logout\",   post(login_controller::destroy))\n        .route(\"/register\", get(register_controller::show).post(register_controller::store))\n        .route(\"/dashboard\", get(dashboard_controller::index))"
+        crate::templates::app_files::auth_route_snippet()
     }
 
     fn inject_api(f: &std::path::Path) {
@@ -1234,6 +1301,101 @@ mod tests {
         let d = tmp(); let f = d.path().join("web.rs");
         fs::write(&f, web_content()).unwrap(); inject_web(&f);
         assert!(fs::read_to_string(&f).unwrap().contains("dashboard_controller"));
+    }
+
+    // ── password reset scaffolding ─────────────────────────────────────────────
+
+    use crate::templates::app_files as af;
+
+    // 88. /forgot-password GET + POST injected into web routes
+    #[test]
+    fn pr_88_forgot_password_routes_injected() {
+        let d = tmp(); let f = d.path().join("web.rs");
+        fs::write(&f, web_content()).unwrap(); inject_web(&f);
+        let c = fs::read_to_string(&f).unwrap();
+        assert!(c.contains("\"/forgot-password\""));
+        assert!(c.contains("get(forgot_password_controller::show).post(forgot_password_controller::store)"));
+    }
+    // 89. /reset-password/{token} GET injected with axum 0.8 param syntax
+    #[test]
+    fn pr_89_reset_password_show_route_injected() {
+        let d = tmp(); let f = d.path().join("web.rs");
+        fs::write(&f, web_content()).unwrap(); inject_web(&f);
+        let c = fs::read_to_string(&f).unwrap();
+        assert!(c.contains("\"/reset-password/{token}\""));
+        assert!(c.contains("get(reset_password_controller::show)"));
+    }
+    // 90. /reset-password POST injected
+    #[test]
+    fn pr_90_reset_password_store_route_injected() {
+        let d = tmp(); let f = d.path().join("web.rs");
+        fs::write(&f, web_content()).unwrap(); inject_web(&f);
+        let c = fs::read_to_string(&f).unwrap();
+        assert!(c.contains("\"/reset-password\""));
+        assert!(c.contains("post(reset_password_controller::store)"));
+    }
+    // 91. use_decl imports the new controllers
+    #[test]
+    fn pr_91_use_decl_has_new_controllers() {
+        let u = web_use();
+        assert!(u.contains("forgot_password_controller"));
+        assert!(u.contains("reset_password_controller"));
+    }
+    // 92. idempotent: /forgot-password appears once after two injections
+    #[test]
+    fn pr_92_idempotent_forgot_password() {
+        let d = tmp(); let f = d.path().join("web.rs");
+        fs::write(&f, web_content()).unwrap(); inject_web(&f); inject_web(&f);
+        assert_eq!(fs::read_to_string(&f).unwrap().matches("\"/forgot-password\"").count(), 1);
+    }
+    // 93. migration SQL templates are well-formed
+    #[test]
+    fn pr_93_migration_sql_well_formed() {
+        let up = af::password_reset_migration_up_sql();
+        let down = af::password_reset_migration_down_sql();
+        assert!(up.contains("CREATE TABLE IF NOT EXISTS password_reset_tokens"));
+        assert!(up.contains("email") && up.contains("token") && up.contains("created_at"));
+        assert!(down.contains("DROP TABLE IF EXISTS password_reset_tokens"));
+    }
+    // 94. forgot controller stores a hashed token and emails a link
+    #[test]
+    fn pr_94_forgot_controller_content() {
+        let c = af::make_auth_forgot_password_controller("my_app");
+        assert!(c.contains("random_token()"));
+        assert!(c.contains("INSERT INTO password_reset_tokens"));
+        assert!(c.contains("Hash::make"));
+        assert!(c.contains("services.mailer.send"));
+        // Neutral response avoids leaking which emails exist.
+        assert!(c.contains("If that email address exists"));
+    }
+    // 95. reset controller verifies token, checks expiry, updates + clears
+    #[test]
+    fn pr_95_reset_controller_content() {
+        let c = af::make_auth_reset_password_controller("my_app");
+        assert!(c.contains("Hash::check"));
+        assert!(c.contains("UPDATE users SET password"));
+        assert!(c.contains("DELETE FROM password_reset_tokens"));
+        assert!(c.contains("Duration::minutes(TOKEN_TTL_MINUTES)"));
+    }
+    // 96. request templates carry the right validation rules
+    #[test]
+    fn pr_96_request_templates_validation() {
+        let forgot = af::make_auth_forgot_password_request();
+        let reset = af::make_auth_reset_password_request();
+        assert!(forgot.contains("ForgotPasswordRequest") && forgot.contains("email"));
+        assert!(reset.contains("ResetPasswordRequest"));
+        assert!(reset.contains("must_match(other = \"password\""));
+        assert!(reset.contains("length(min = 8"));
+    }
+    // 97. views extend the layout and post to the right actions
+    #[test]
+    fn pr_97_view_templates() {
+        let forgot = af::view_auth_forgot_password();
+        let reset = af::view_auth_reset_password();
+        assert!(forgot.contains("action=\"/forgot-password\""));
+        assert!(reset.contains("action=\"/reset-password\""));
+        assert!(reset.contains("name=\"token\""));
+        assert!(reset.contains("name=\"password_confirmation\""));
     }
 
     // ── combined / edge cases (15) ─────────────────────────────────────────────

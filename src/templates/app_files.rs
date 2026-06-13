@@ -127,7 +127,7 @@ pub fn bootstrap_lib_rs() -> &'static str {
     r#"pub use willow_forge_runtime::{
     AppError, AppState, Auth, AuthUser, Cache, Config, Context, Email, Hash, Jwt, JwtUser,
     MailConfig, Mailer, RedisCluster, RedisConfig, Services, Session, ValidatedJson, ViewEngine,
-    authenticate, session_middleware, view,
+    authenticate, random_token, session_middleware, view,
 };
 
 mod app_service_provider;
@@ -781,6 +781,10 @@ pub fn view_welcome() -> &'static str {
         <tr><td><code>GET</code></td><td><code><a href="/register">/register</a></code></td><td>Registration form</td></tr>
         <tr><td><code>POST</code></td><td><code>/register</code></td><td>Submit registration</td></tr>
         <tr><td><code>GET</code></td><td><code><a href="/dashboard">/dashboard</a></code></td><td>Protected dashboard (requires login)</td></tr>
+        <tr><td><code>GET</code></td><td><code><a href="/forgot-password">/forgot-password</a></code></td><td>Forgot password form</td></tr>
+        <tr><td><code>POST</code></td><td><code>/forgot-password</code></td><td>Email a reset link</td></tr>
+        <tr><td><code>GET</code></td><td><code>/reset-password/{token}</code></td><td>Reset password form</td></tr>
+        <tr><td><code>POST</code></td><td><code>/reset-password</code></td><td>Submit new password</td></tr>
     </tbody>
 </table>
 
@@ -1015,6 +1019,19 @@ pub fn initial_migration_up_sql() -> &'static str {
 
 pub fn initial_migration_down_sql() -> &'static str {
     "DROP TABLE IF EXISTS users;\n"
+}
+
+pub fn password_reset_migration_up_sql() -> &'static str {
+    r#"CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    email      VARCHAR(255)  PRIMARY KEY,
+    token      VARCHAR(255)  NOT NULL,
+    created_at TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+);
+"#
+}
+
+pub fn password_reset_migration_down_sql() -> &'static str {
+    "DROP TABLE IF EXISTS password_reset_tokens;\n"
 }
 
 pub fn bootstrap_middleware_rs(name: &str) -> String {
@@ -1394,11 +1411,317 @@ pub fn view_auth_dashboard() -> &'static str {
 }
 
 pub fn auth_route_use_decl() -> &'static str {
-    "use crate::app::http::controllers::auth::{login_controller, register_controller};\nuse crate::app::http::controllers::dashboard_controller;"
+    "use crate::app::http::controllers::auth::{login_controller, register_controller, forgot_password_controller, reset_password_controller};\nuse crate::app::http::controllers::dashboard_controller;"
 }
 
 pub fn auth_route_snippet() -> &'static str {
-    "\n        .route(\"/login\",    get(login_controller::show).post(login_controller::store))\n        .route(\"/logout\",   post(login_controller::destroy))\n        .route(\"/register\", get(register_controller::show).post(register_controller::store))\n        .route(\"/dashboard\", get(dashboard_controller::index))"
+    "\n        .route(\"/login\",    get(login_controller::show).post(login_controller::store))\n        .route(\"/logout\",   post(login_controller::destroy))\n        .route(\"/register\", get(register_controller::show).post(register_controller::store))\n        .route(\"/dashboard\", get(dashboard_controller::index))\n        .route(\"/forgot-password\", get(forgot_password_controller::show).post(forgot_password_controller::store))\n        .route(\"/reset-password/{token}\", get(reset_password_controller::show))\n        .route(\"/reset-password\", post(reset_password_controller::store))"
+}
+
+// ── Password reset scaffolding templates ───────────────────────────────────────
+
+pub fn make_auth_forgot_password_request() -> &'static str {
+    r#"use serde::Deserialize;
+use validator::Validate;
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct ForgotPasswordRequest {
+    #[validate(email(message = "Must be a valid email address"))]
+    pub email: String,
+}
+"#
+}
+
+pub fn make_auth_reset_password_request() -> &'static str {
+    r#"use serde::Deserialize;
+use validator::Validate;
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct ResetPasswordRequest {
+    #[validate(email(message = "Must be a valid email address"))]
+    pub email: String,
+
+    #[validate(length(min = 1, message = "Reset token is required"))]
+    pub token: String,
+
+    #[validate(length(min = 8, message = "Password must be at least 8 characters"))]
+    pub password: String,
+
+    #[validate(must_match(other = "password", message = "Password confirmation does not match"))]
+    pub password_confirmation: String,
+}
+"#
+}
+
+pub fn make_auth_forgot_password_controller(name: &str) -> String {
+    format!(
+        r#"use axum::{{
+    extract::Form,
+    response::{{IntoResponse, Redirect}},
+}};
+
+use ::{name}::{{AppError, Context, Email, Hash, Session, random_token, view}};
+use crate::app::http::requests::forgot_password_request::ForgotPasswordRequest;
+
+/// How long a password reset link stays valid, in minutes.
+const TOKEN_TTL_MINUTES: i64 = 60;
+
+/// GET /forgot-password
+pub async fn show(ctx: Context, session: Session) -> Result<impl IntoResponse, AppError> {{
+    let error: Option<String> = session.get("flash_error");
+    let status: Option<String> = session.get("flash_status");
+    session.forget("flash_error");
+    session.forget("flash_status");
+    Ok(view(&ctx, "auth.forgot-password", minijinja::context! {{
+        flash_error => error,
+        flash_status => status,
+    }})?)
+}}
+
+/// POST /forgot-password
+pub async fn store(
+    ctx: Context,
+    session: Session,
+    Form(req): Form<ForgotPasswordRequest>,
+) -> impl IntoResponse {{
+    use validator::Validate;
+    if let Err(errors) = req.validate() {{
+        let msg = errors.field_errors()
+            .values()
+            .flat_map(|v| v.iter())
+            .find_map(|e| e.message.clone())
+            .unwrap_or_else(|| "Invalid input.".into());
+        session.put("flash_error", msg.as_ref());
+        return Redirect::to("/forgot-password").into_response();
+    }}
+
+    // Same response whether or not the email exists, to avoid leaking which
+    // addresses are registered.
+    let neutral = "If that email address exists in our records, a password reset link has been sent.";
+
+    if let Ok(Some(_user)) =
+        crate::app::models::user::User::find_by_email(&ctx.state.services.db, &req.email).await
+    {{
+        let token = random_token();
+        if let Ok(hashed_token) = Hash::make(&token) {{
+            let stored = sqlx::query(
+                "INSERT INTO password_reset_tokens (email, token) VALUES ($1, $2) \
+                 ON CONFLICT (email) DO UPDATE SET token = EXCLUDED.token, created_at = NOW()",
+            )
+            .bind(&req.email)
+            .bind(&hashed_token)
+            .execute(&ctx.state.services.db)
+            .await;
+
+            if stored.is_ok() {{
+                let base = std::env::var("APP_URL")
+                    .unwrap_or_else(|_| "http://localhost:3000".to_string());
+                let link = format!("{{}}/reset-password/{{}}", base.trim_end_matches('/'), token);
+                let text = format!(
+                    "You requested a password reset.\n\nOpen this link to choose a new password \
+                     (valid for {{}} minutes):\n{{}}\n\nIf you did not request this, ignore this email.",
+                    TOKEN_TTL_MINUTES, link,
+                );
+                let html = format!(
+                    "<p>You requested a password reset.</p>\
+                     <p><a href=\"{{}}\">Choose a new password</a> (valid for {{}} minutes).</p>\
+                     <p>If you did not request this, you can ignore this email.</p>",
+                    link, TOKEN_TTL_MINUTES,
+                );
+                let email = Email::new(req.email.as_str(), "Reset your password")
+                    .text(text)
+                    .html(html);
+                if let Err(e) = ctx.state.services.mailer.send(&email).await {{
+                    tracing::error!("Failed to send password reset email: {{}}", e);
+                }}
+            }}
+        }}
+    }}
+
+    session.put("flash_status", neutral);
+    Redirect::to("/forgot-password").into_response()
+}}
+"#,
+        name = name
+    )
+}
+
+pub fn make_auth_reset_password_controller(name: &str) -> String {
+    format!(
+        r#"use axum::{{
+    extract::{{Form, Path}},
+    response::{{IntoResponse, Redirect}},
+}};
+use chrono::{{DateTime, Duration, Utc}};
+use sqlx::FromRow;
+
+use ::{name}::{{AppError, Context, Hash, Session, view}};
+use crate::app::http::requests::reset_password_request::ResetPasswordRequest;
+
+/// How long a password reset link stays valid, in minutes.
+const TOKEN_TTL_MINUTES: i64 = 60;
+
+#[derive(FromRow)]
+struct ResetRow {{
+    token: String,
+    created_at: DateTime<Utc>,
+}}
+
+/// GET /reset-password/{{token}}
+pub async fn show(
+    ctx: Context,
+    session: Session,
+    Path(token): Path<String>,
+) -> Result<impl IntoResponse, AppError> {{
+    let error: Option<String> = session.get("flash_error");
+    let old_email: Option<String> = session.get("flash_old_email");
+    session.forget("flash_error");
+    session.forget("flash_old_email");
+    Ok(view(&ctx, "auth.reset-password", minijinja::context! {{
+        token => token,
+        flash_error => error,
+        old_email => old_email.unwrap_or_default(),
+    }})?)
+}}
+
+/// POST /reset-password
+pub async fn store(
+    ctx: Context,
+    session: Session,
+    Form(req): Form<ResetPasswordRequest>,
+) -> impl IntoResponse {{
+    use validator::Validate;
+    let back = format!("/reset-password/{{}}", req.token);
+
+    if let Err(errors) = req.validate() {{
+        let msg = errors.field_errors()
+            .values()
+            .flat_map(|v| v.iter())
+            .find_map(|e| e.message.clone())
+            .unwrap_or_else(|| "Invalid input.".into());
+        session.put("flash_error", msg.as_ref());
+        session.put("flash_old_email", req.email.as_str());
+        return Redirect::to(&back).into_response();
+    }}
+
+    let row = sqlx::query_as::<_, ResetRow>(
+        "SELECT token, created_at FROM password_reset_tokens WHERE email = $1 LIMIT 1",
+    )
+    .bind(&req.email)
+    .fetch_optional(&ctx.state.services.db)
+    .await;
+
+    let invalid = "This password reset link is invalid or has expired.";
+    let row = match row {{
+        Ok(Some(r)) => r,
+        _ => {{
+            session.put("flash_error", invalid);
+            session.put("flash_old_email", req.email.as_str());
+            return Redirect::to(&back).into_response();
+        }}
+    }};
+
+    let expired = Utc::now() - row.created_at > Duration::minutes(TOKEN_TTL_MINUTES);
+    if expired || !Hash::check(&req.token, &row.token) {{
+        session.put("flash_error", invalid);
+        session.put("flash_old_email", req.email.as_str());
+        return Redirect::to(&back).into_response();
+    }}
+
+    let hashed = match Hash::make(&req.password) {{
+        Ok(h) => h,
+        Err(_) => {{
+            session.put("flash_error", "An internal error occurred. Please try again.");
+            return Redirect::to(&back).into_response();
+        }}
+    }};
+
+    let updated = sqlx::query("UPDATE users SET password = $1 WHERE email = $2")
+        .bind(&hashed)
+        .bind(&req.email)
+        .execute(&ctx.state.services.db)
+        .await;
+
+    if updated.is_err() {{
+        session.put("flash_error", "Could not reset your password. Please try again.");
+        return Redirect::to(&back).into_response();
+    }}
+
+    let _ = sqlx::query("DELETE FROM password_reset_tokens WHERE email = $1")
+        .bind(&req.email)
+        .execute(&ctx.state.services.db)
+        .await;
+
+    session.put("flash_status", "Your password has been reset. You can now log in.");
+    Redirect::to("/login").into_response()
+}}
+"#,
+        name = name
+    )
+}
+
+pub fn view_auth_forgot_password() -> &'static str {
+    r#"{% extends "layouts.app" %}
+
+{% block title %}Forgot Password{% endblock %}
+
+{% block content %}
+<div class="auth-form">
+  <h1>Forgot Password</h1>
+  {% if flash_status %}
+  <div class="alert alert-success">{{ flash_status }}</div>
+  {% endif %}
+  {% if flash_error %}
+  <div class="alert alert-error">{{ flash_error }}</div>
+  {% endif %}
+  <p>Enter your email address and we'll send you a password reset link.</p>
+  <form method="POST" action="/forgot-password">
+    <div>
+      <label for="email">Email</label>
+      <input type="text" id="email" name="email" autocomplete="email">
+    </div>
+    <div>
+      <button type="submit">Send reset link</button>
+    </div>
+  </form>
+  <p><a href="/login">Back to login</a></p>
+</div>
+{% endblock %}
+"#
+}
+
+pub fn view_auth_reset_password() -> &'static str {
+    r#"{% extends "layouts.app" %}
+
+{% block title %}Reset Password{% endblock %}
+
+{% block content %}
+<div class="auth-form">
+  <h1>Reset Password</h1>
+  {% if flash_error %}
+  <div class="alert alert-error">{{ flash_error }}</div>
+  {% endif %}
+  <form method="POST" action="/reset-password">
+    <input type="hidden" name="token" value="{{ token }}">
+    <div>
+      <label for="email">Email</label>
+      <input type="text" id="email" name="email" autocomplete="email" value="{{ old_email }}">
+    </div>
+    <div>
+      <label for="password">New Password</label>
+      <input type="password" id="password" name="password" autocomplete="new-password">
+    </div>
+    <div>
+      <label for="password_confirmation">Confirm Password</label>
+      <input type="password" id="password_confirmation" name="password_confirmation" autocomplete="new-password">
+    </div>
+    <div>
+      <button type="submit">Reset password</button>
+    </div>
+  </form>
+</div>
+{% endblock %}
+"#
 }
 
 pub fn make_auth_api_login_controller(name: &str) -> String {
