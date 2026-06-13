@@ -271,9 +271,12 @@ mod tests {
             app_env: "test".to_string(),
             app_debug: true,
             redis: RedisConfig { nodes: cluster_nodes() },
+            mail: crate::mailer::MailConfig::default(),
         };
 
-        let services = Services { db, redis };
+        let mailer =
+            crate::mailer::Mailer::from_config(&crate::mailer::MailConfig::default()).unwrap();
+        let services = Services { db, redis, mailer };
         let views = minijinja::Environment::new();
 
         let state = Arc::new(AppState { config, services, views });

@@ -3,6 +3,8 @@ use redis::cluster::ClusterClient;
 use sqlx::PgPool;
 use std::sync::Arc;
 
+use crate::mailer::{MailConfig, Mailer};
+
 pub type ViewEngine = Environment<'static>;
 pub type RedisCluster = Arc<ClusterClient>;
 
@@ -19,6 +21,7 @@ pub struct Config {
     pub app_env: String,
     pub app_debug: bool,
     pub redis: RedisConfig,
+    pub mail: MailConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -33,4 +36,6 @@ pub struct Services {
     /// Shared Redis cluster client.
     /// Call `.get_async_connection().await` to obtain a connection.
     pub redis: RedisCluster,
+    /// Mail sender. Send via `services.mailer.send(&email).await`.
+    pub mailer: Mailer,
 }

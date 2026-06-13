@@ -56,6 +56,15 @@ SESSION_SECURE=false
 
 JWT_SECRET=change-me-in-production
 JWT_EXPIRY=3600
+
+MAIL_MAILER=log
+MAIL_HOST=127.0.0.1
+MAIL_PORT=2525
+MAIL_USERNAME=
+MAIL_PASSWORD=
+MAIL_ENCRYPTION=none
+MAIL_FROM_ADDRESS=hello@example.com
+MAIL_FROM_NAME="Willow Forge"
 "#
 }
 
@@ -116,8 +125,8 @@ async fn main() -> Result<()> {{
 
 pub fn bootstrap_lib_rs() -> &'static str {
     r#"pub use willow_forge_runtime::{
-    AppError, AppState, Auth, AuthUser, Cache, Config, Context, Hash, Jwt, JwtUser,
-    RedisCluster, RedisConfig, Services, Session, ValidatedJson, ViewEngine,
+    AppError, AppState, Auth, AuthUser, Cache, Config, Context, Email, Hash, Jwt, JwtUser,
+    MailConfig, Mailer, RedisCluster, RedisConfig, Services, Session, ValidatedJson, ViewEngine,
     authenticate, session_middleware, view,
 };
 
@@ -145,20 +154,39 @@ pub async fn bootstrap() -> Result<Arc<AppState>> {
             .parse()
             .unwrap_or(true),
         redis: RedisConfig { nodes: redis_nodes.clone() },
+        mail: mail_config(),
     };
 
     let views = build_view_engine()?;
 
-    let db    = app_service_provider::create_pool()?;
-    let redis = app_service_provider::create_redis_cluster(&redis_nodes)?;
+    let db     = app_service_provider::create_pool()?;
+    let redis  = app_service_provider::create_redis_cluster(&redis_nodes)?;
+    let mailer = Mailer::from_config(&config.mail)?;
 
-    let services = Services { db, redis };
+    let services = Services { db, redis, mailer };
 
     Ok(Arc::new(AppState {
         config,
         services,
         views,
     }))
+}
+
+fn mail_config() -> MailConfig {
+    MailConfig {
+        driver: std::env::var("MAIL_MAILER").unwrap_or_else(|_| "log".to_string()),
+        host: std::env::var("MAIL_HOST").unwrap_or_else(|_| "127.0.0.1".to_string()),
+        port: std::env::var("MAIL_PORT")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(2525),
+        username: std::env::var("MAIL_USERNAME").unwrap_or_default(),
+        password: std::env::var("MAIL_PASSWORD").unwrap_or_default(),
+        encryption: std::env::var("MAIL_ENCRYPTION").unwrap_or_else(|_| "none".to_string()),
+        from_address: std::env::var("MAIL_FROM_ADDRESS")
+            .unwrap_or_else(|_| "hello@example.com".to_string()),
+        from_name: std::env::var("MAIL_FROM_NAME").unwrap_or_else(|_| "Willow Forge".to_string()),
+    }
 }
 
 fn build_view_engine() -> Result<ViewEngine> {

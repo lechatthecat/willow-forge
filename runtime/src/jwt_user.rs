@@ -82,8 +82,14 @@ mod tests {
                 app_env: "test".to_string(),
                 app_debug: false,
                 redis: RedisConfig { nodes: vec![] },
+                mail: crate::mailer::MailConfig::default(),
             },
-            services: Services { db, redis },
+            services: Services {
+                db,
+                redis,
+                mailer: crate::mailer::Mailer::from_config(&crate::mailer::MailConfig::default())
+                    .unwrap(),
+            },
             views: minijinja::Environment::new(),
         })
     }

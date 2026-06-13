@@ -31,6 +31,9 @@ pub enum AppError {
     #[error("Redis error")]
     Redis(#[from] redis::RedisError),
 
+    #[error("Mail error: {0}")]
+    Mail(String),
+
     #[error("Conflict: {0}")]
     Conflict(String),
 
@@ -96,6 +99,15 @@ impl IntoResponse for AppError {
 
             AppError::Redis(e) => {
                 tracing::error!("Redis error: {}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "message": "Internal server error" })),
+                )
+                    .into_response()
+            }
+
+            AppError::Mail(e) => {
+                tracing::error!("Mail error: {}", e);
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({ "message": "Internal server error" })),
@@ -174,6 +186,21 @@ mod tests {
     #[tokio::test]
     async fn internal_is_500() {
         assert_eq!(status_of(AppError::Internal).await, StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn mail_is_500() {
+        assert_eq!(
+            status_of(AppError::Mail("smtp down".to_string())).await,
+            StatusCode::INTERNAL_SERVER_ERROR,
+        );
+    }
+
+    #[tokio::test]
+    async fn mail_body_hides_internal_detail() {
+        // Mail errors must not leak SMTP detail to clients.
+        let body = body_json(AppError::Mail("smtp creds bad".to_string())).await;
+        assert_eq!(body["message"], "Internal server error");
     }
 
     // ── Response body shape ───────────────────────────────────────────────────
