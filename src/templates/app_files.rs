@@ -96,14 +96,14 @@ async fn main() -> Result<()> {{
     )
     .layer(axum::middleware::from_fn_with_state(
         Arc::clone(&app_state),
-        app::Exceptions::Handler::render,
+        app::exceptions::handler::render,
     ))
     .with_state(app_state);
 
     let addr = "0.0.0.0:3000";
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
-    tracing::info!("🌿 Willow Forge server started on http://{{}}", addr);
+    tracing::info!("Willow Forge server started on http://{{}}", addr);
 
     axum::serve(listener, app).await?;
 
@@ -225,7 +225,7 @@ use {name}::AppState;
 /// Checks:
 /// - Path starts with `/api/` (API routes always return JSON)
 /// - OR Accept header contains `application/json`, `/json`, or `+json`
-/// - OR Content-Type: application/json (client is sending JSON → expects JSON back)
+/// - OR Content-Type: application/json (client is sending JSON ↁEexpects JSON back)
 /// - OR the request is an AJAX call (X-Requested-With: XMLHttpRequest) with Accept: */* or absent
 fn expects_json(request: &Request) -> bool {{
     // API routes always return JSON regardless of Accept header
@@ -252,7 +252,7 @@ fn expects_json(request: &Request) -> bool {{
         .map(|ct| ct.contains("application/json"))
         .unwrap_or(false);
 
-    // ajax() — X-Requested-With: XMLHttpRequest
+    // ajax()  EX-Requested-With: XMLHttpRequest
     let is_ajax = request
         .headers()
         .get("x-requested-with")
@@ -260,13 +260,13 @@ fn expects_json(request: &Request) -> bool {{
         .map(|v| v.eq_ignore_ascii_case("xmlhttprequest"))
         .unwrap_or(false);
 
-    // acceptsAnyContentType() — Accept: */* or header absent
+    // acceptsAnyContentType()  EAccept: */* or header absent
     let accepts_any = accept.is_empty() || accept.contains("*/*");
 
     wants_json || sends_json || (is_ajax && accepts_any)
 }}
 
-/// Exception handler — intercepts error responses and renders HTML error views when available.
+/// Exception handler  Eintercepts error responses and renders HTML error views when available.
 ///
 /// How it works:
 /// - Runs on every response (as the outermost layer in main.rs)
@@ -327,12 +327,12 @@ pub async fn render(
 pub fn view_error_404_html() -> &'static str {
     r#"{% extends "layouts.app" %}
 
-{% block title %}404 — Not Found | {{ app_name }}{% endblock %}
+{% block title %}404  ENot Found | {{ app_name }}{% endblock %}
 
 {% block content %}
 <h1>{{ code }}</h1>
 <p>{{ message }}</p>
-<p><a href="/">← Back to home</a></p>
+<p><a href="/">ↁEBack to home</a></p>
 {% endblock %}
 "#
 }
@@ -340,7 +340,7 @@ pub fn view_error_404_html() -> &'static str {
 pub fn view_error_500_html() -> &'static str {
     r#"{% extends "layouts.app" %}
 
-{% block title %}500 — Server Error | {{ app_name }}{% endblock %}
+{% block title %}500  EServer Error | {{ app_name }}{% endblock %}
 
 {% block content %}
 <h1>{{ code }}</h1>
@@ -352,7 +352,7 @@ pub fn view_error_500_html() -> &'static str {
 pub fn view_error_generic_html() -> &'static str {
     r#"{% extends "layouts.app" %}
 
-{% block title %}{{ code }} — {{ message }} | {{ app_name }}{% endblock %}
+{% block title %}{{ code }}  E{{ message }} | {{ app_name }}{% endblock %}
 
 {% block content %}
 <h1>{{ code }}</h1>
@@ -391,7 +391,7 @@ pub fn create_pool() -> Result<PgPool> {
 
 /// Build a Redis cluster client from a list of node URLs.
 ///
-/// Only validates config syntax — no actual connection is made here.
+/// Only validates config syntax  Eno actual connection is made here.
 /// If the cluster is down the app still starts; Redis endpoints will fail gracefully.
 pub fn create_redis_cluster(nodes: &[String]) -> Result<Arc<ClusterClient>> {
     let client = ClusterClient::new(nodes.iter().map(|s| s.as_str()).collect::<Vec<_>>())
@@ -407,13 +407,13 @@ pub fn routes_api(name: &str) -> String {
 use std::sync::Arc;
 
 use {name}::AppState;
-use crate::app::Http::Controllers::{{UserController, StatusController}};
+use crate::app::http::controllers::{{user_controller, status_controller}};
 
 pub fn routes() -> Router<Arc<AppState>> {{
     Router::new()
-        .route("/api/users", get(UserController::index).post(UserController::store))
-        .route("/api/status", get(StatusController::index))
-        .route("/api/users/mock", get(UserController::mock))
+        .route("/api/users", get(user_controller::index).post(user_controller::store))
+        .route("/api/status", get(status_controller::index))
+        .route("/api/users/mock", get(user_controller::mock))
 }}
 "#,
         name = name
@@ -426,11 +426,11 @@ pub fn routes_web(name: &str) -> String {
 use std::sync::Arc;
 
 use {name}::AppState;
-use crate::app::Http::Controllers::HomeController;
+use crate::app::http::controllers::home_controller;
 
 pub fn routes() -> Router<Arc<AppState>> {{
     Router::new()
-        .route("/", get(HomeController::index))
+        .route("/", get(home_controller::index))
 }}
 "#,
         name = name
@@ -468,7 +468,7 @@ use serde_json::json;
 use validator::Validate;
 
 use {name}::{{AppError, Cache, Context, ValidatedJson}};
-use crate::app::Models::User::User;
+use crate::app::models::user::User;
 
 // ============================================================
 // Using AppError
@@ -486,10 +486,10 @@ use crate::app::Models::User::User;
 //
 // --- Automatic conversion via ? ---
 //
-//   sqlx::Error     → AppError::Database    (via #[from])
-//   ViewError       → AppError::View        (via #[from])
-//   ValidationError → AppError::Validation  (via #[from])
-//   redis::RedisError → AppError::Redis     (via #[from])
+//   sqlx::Error     ↁEAppError::Database    (via #[from])
+//   ViewError       ↁEAppError::View        (via #[from])
+//   ValidationError ↁEAppError::Validation  (via #[from])
+//   redis::RedisError ↁEAppError::Redis     (via #[from])
 //
 //   let users = sqlx::query_as::<_, User>(...).fetch_all(pool).await?;
 //   // sqlx::Error is automatically converted to AppError::Database
@@ -599,7 +599,7 @@ use serde_json::json;
 use {name}::Context;
 
 pub async fn index(ctx: Context) -> impl IntoResponse {{
-    // Both checks run concurrently — neither blocks the other.
+    // Both checks run concurrently  Eneither blocks the other.
     let (db, redis) = tokio::join!(
         check_db(&ctx),
         check_redis(&ctx),
@@ -695,7 +695,7 @@ pub fn view_layout_app() -> &'static str {
 pub fn view_welcome() -> &'static str {
     r#"{% extends "layouts.app" %}
 
-{% block title %}Welcome — {{ app_name }}{% endblock %}
+{% block title %}Welcome  E{{ app_name }}{% endblock %}
 
 {% block content %}
 <h1>Welcome to {{ app_name }}</h1>
@@ -770,23 +770,23 @@ pub fn view_welcome() -> &'static str {
 
 <h2>API Examples</h2>
 
-<h3>POST /api/users — success</h3>
+<h3>POST /api/users  Esuccess</h3>
 <pre><code>curl -s -X POST http://localhost:3000/api/users \
   -H "Content-Type: application/json" \
   -d '{"name":"Alice","email":"alice@example.com","password":"secret123"}' | jq</code></pre>
 
-<h3>POST /api/users — validation error (422)</h3>
+<h3>POST /api/users  Evalidation error (422)</h3>
 <pre><code>curl -s -X POST http://localhost:3000/api/users \
   -H "Content-Type: application/json" \
   -d '{"name":"","email":"not-an-email","password":"short"}' | jq</code></pre>
 
-<h3>POST /api/users — malformed JSON (400)</h3>
+<h3>POST /api/users  Emalformed JSON (400)</h3>
 <pre><code>curl -s -X POST http://localhost:3000/api/users \
   -H "Content-Type: application/json" \
   -d 'invalid' | jq</code></pre>
 
 <h2>JWT API Auth (after <code>willow-forge make:auth --api</code>)</h2>
-<p>Scaffold JWT-based auth (login, refresh, logout, register — JSON only, no views):</p>
+<p>Scaffold JWT-based auth (login, refresh, logout, register  EJSON only, no views):</p>
 <pre><code>willow-forge make:auth --api</code></pre>
 <p>Routes injected into <code>src/routes/api.rs</code>. Restart the server to activate them.</p>
 <table>
@@ -861,9 +861,9 @@ docker compose -f src/docker/docker-compose.yml restart redis-cluster-init</code
         .then(data => {
             // DB status
             const dbOk = data.db;
-            document.getElementById('db-status').textContent = dbOk ? 'Connected ✓' : 'Not connected ✗';
+            document.getElementById('db-status').textContent = dbOk ? 'Connected ✁E : 'Not connected ✁E;
             const dbCls = dbOk ? 'badge-db-ok' : 'badge-db-off';
-            const dbLabel = dbOk ? 'DB — connected' : 'DB — not connected';
+            const dbLabel = dbOk ? 'DB  Econnected' : 'DB  Enot connected';
             ['db-badge-1', 'db-badge-2'].forEach(id => {
                 const el = document.getElementById(id);
                 el.className = 'badge ' + dbCls;
@@ -873,18 +873,18 @@ docker compose -f src/docker/docker-compose.yml restart redis-cluster-init</code
             // Redis status
             const redisOk = data.redis;
             const redisEl = document.getElementById('redis-status');
-            redisEl.textContent = redisOk ? 'Connected ✓' : 'Not connected ✗';
+            redisEl.textContent = redisOk ? 'Connected ✁E : 'Not connected ✁E;
             redisEl.style.color = redisOk ? '#0a3622' : '#58151c';
         })
         .catch(() => {
-            document.getElementById('db-status').textContent = 'Not connected ✗';
+            document.getElementById('db-status').textContent = 'Not connected ✁E;
             ['db-badge-1', 'db-badge-2'].forEach(id => {
                 const el = document.getElementById(id);
                 el.className = 'badge badge-db-off';
-                el.textContent = 'DB — not connected';
+                el.textContent = 'DB  Enot connected';
             });
             const redisEl = document.getElementById('redis-status');
-            redisEl.textContent = 'Not connected ✗';
+            redisEl.textContent = 'Not connected ✁E;
             redisEl.style.color = '#58151c';
         });
 </script>
@@ -913,19 +913,19 @@ password = ""
 }
 
 pub fn src_app_mod_rs() -> &'static str {
-    "pub mod Http;\npub mod Models;\npub mod Exceptions;\n"
+    "pub mod http;\npub mod models;\npub mod exceptions;\n"
 }
 
 pub fn src_app_http_mod_rs() -> &'static str {
-    "pub mod Controllers;\npub mod Middleware;\npub mod Requests;\n"
+    "pub mod controllers;\npub mod middleware;\npub mod requests;\n"
 }
 
 pub fn src_app_http_controllers_mod_rs() -> &'static str {
-    "pub mod HomeController;\npub mod UserController;\npub mod StatusController;\n"
+    "pub mod home_controller;\npub mod user_controller;\npub mod status_controller;\n"
 }
 
 pub fn src_app_http_middleware_mod_rs() -> &'static str {
-    "pub mod LogRequest;\n"
+    "pub mod log_request;\n"
 }
 
 pub fn src_app_http_requests_mod_rs() -> &'static str {
@@ -933,19 +933,15 @@ pub fn src_app_http_requests_mod_rs() -> &'static str {
 }
 
 pub fn src_app_models_mod_rs() -> &'static str {
-    "pub mod User;\n"
+    "pub mod user;\n"
 }
 
 pub fn src_app_exceptions_mod_rs() -> &'static str {
-    "pub mod Handler;\n"
+    "pub mod handler;\n"
 }
 
 pub fn src_routes_mod_rs() -> &'static str {
     "pub mod web;\npub mod api;\n"
-}
-
-pub fn models_mod_rs() -> &'static str {
-    "pub mod User;\n"
 }
 
 pub fn user_model_rs() -> &'static str {
@@ -991,32 +987,32 @@ pub fn initial_migration_down_sql() -> &'static str {
 
 pub fn bootstrap_middleware_rs(name: &str) -> String {
     format!(
-        r#"use crate::app::Http::Middleware::LogRequest;
+        r#"use crate::app::http::middleware::log_request;
 
 use axum::{{extract::Request, middleware, middleware::Next, Router}};
 use std::sync::Arc;
 
 use {name}::{{AppState, session_middleware}};
 
-/// Global middleware — runs on every request.
+/// Global middleware  Eruns on every request.
 pub fn global(state: Arc<AppState>, router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {{
     let sess = Arc::clone(&state);
     router
-        .layer(middleware::from_fn(LogRequest::handle))
+        .layer(middleware::from_fn(log_request::handle))
         .layer(middleware::from_fn(move |req: Request, next: Next| {{
             let s = Arc::clone(&sess);
             async move {{ session_middleware(s, req, next).await }}
         }}))
 }}
 
-/// Web middleware — runs only on HTML routes (src/routes/web.rs).
+/// Web middleware  Eruns only on HTML routes (src/routes/web.rs).
 pub fn web(router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {{
     router
     // Protect all web routes with auth:
     // .layer(middleware::from_fn({name}::authenticate))
 }}
 
-/// API middleware — runs only on API routes (src/routes/api.rs).
+/// API middleware  Eruns only on API routes (src/routes/api.rs).
 pub fn api(router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {{
     router
 }}
@@ -1037,7 +1033,7 @@ pub async fn handle(request: Request, next: Next) -> Response {
     let response = next.run(request).await;
 
     tracing::info!(
-        "{} {} → {} ({:?})",
+        "{} {} ↁE{} ({:?})",
         method,
         uri,
         response.status(),
@@ -1062,7 +1058,7 @@ pub fn make_middleware_template(name: &str) -> String {
 ///
 /// To register this middleware, add it to src/middleware.rs:
 ///
-///   use crate::app::Http::Middleware::{name};
+///   use crate::app::http::middleware::{name};
 ///
 ///   // In global(), api(), or web():
 ///   router.layer(axum::middleware::from_fn({snake}::handle))
@@ -1132,7 +1128,7 @@ pub fn make_auth_login_controller(name: &str) -> String {
 }};
 
 use {name}::{{AppError, Auth, Context, Hash, Session, view}};
-use crate::app::Http::Requests::login_request::LoginRequest;
+use crate::app::http::requests::login_request::LoginRequest;
 
 /// GET /login
 pub async fn show(ctx: Context, session: Session) -> Result<impl IntoResponse, AppError> {{
@@ -1164,7 +1160,7 @@ pub async fn store(
         return Redirect::to("/login").into_response();
     }}
 
-    let result = crate::app::Models::User::User::find_by_email(&ctx.state.services.db, &req.email).await;
+    let result = crate::app::models::user::User::find_by_email(&ctx.state.services.db, &req.email).await;
     match result {{
         Ok(Some(u)) if Hash::check(&req.password, &u.password) => {{
             Auth::login(&session, u.id as i64);
@@ -1196,7 +1192,7 @@ pub fn make_auth_register_controller(name: &str) -> String {
 }};
 
 use {name}::{{AppError, Auth, Context, Hash, Session, view}};
-use crate::app::Http::Requests::register_request::RegisterRequest;
+use crate::app::http::requests::register_request::RegisterRequest;
 
 /// GET /register
 pub async fn show(ctx: Context, session: Session) -> Result<impl IntoResponse, AppError> {{
@@ -1242,7 +1238,7 @@ pub async fn store(
         }}
     }};
 
-    let result = sqlx::query_as::<_, crate::app::Models::User::User>(
+    let result = sqlx::query_as::<_, crate::app::models::user::User>(
         "INSERT INTO users (name, email, password) VALUES ($1, $2, $3) RETURNING *",
     )
     .bind(&req.name)
@@ -1341,7 +1337,7 @@ pub fn make_auth_dashboard_controller(name: &str) -> String {
         r#"use axum::response::IntoResponse;
 use {name}::{{AppError, AuthUser, Context, view}};
 
-/// GET /dashboard — requires session login
+/// GET /dashboard  Erequires session login
 pub async fn index(auth: AuthUser, ctx: Context) -> Result<impl IntoResponse, AppError> {{
     Ok(view(&ctx, "dashboard", minijinja::context! {{ user_id => auth.id }})?)
 }}
@@ -1365,13 +1361,6 @@ pub fn view_auth_dashboard() -> &'static str {
 "#
 }
 
-pub fn auth_route_snippet() -> &'static str {
-    r#"NOTE: make:auth injects routes automatically into src/routes/web.rs.
-      Controllers use Form<T> and return redirects, not JSON.
-      For REST API auth, use: willow make:auth --api
-"#
-}
-
 pub fn make_auth_api_login_controller(name: &str) -> String {
     format!(
         r#"use axum::{{Json, http::HeaderMap, response::IntoResponse}};
@@ -1379,14 +1368,14 @@ use chrono::Utc;
 use serde_json::json;
 
 use {name}::{{AppError, Context, Hash, Jwt, JwtUser, ValidatedJson}};
-use crate::app::Http::Requests::login_request::LoginRequest;
+use crate::app::http::requests::login_request::LoginRequest;
 
 /// POST /api/auth/login
 pub async fn store(
     ctx: Context,
     ValidatedJson(req): ValidatedJson<LoginRequest>,
 ) -> Result<impl IntoResponse, AppError> {{
-    let user = crate::app::Models::User::User::find_by_email(&ctx.state.services.db, &req.email)
+    let user = crate::app::models::user::User::find_by_email(&ctx.state.services.db, &req.email)
         .await?
         .ok_or(AppError::Unauthorized)?;
 
@@ -1446,7 +1435,7 @@ pub async fn destroy(
     Ok(Json(json!({{"message": "Logged out"}})))
 }}
 
-/// GET /api/me — returns the authenticated user's ID
+/// GET /api/me  Ereturns the authenticated user's ID
 pub async fn me(auth: JwtUser) -> impl IntoResponse {{
     Json(json!({{"user_id": auth.id}}))
 }}
@@ -1461,7 +1450,7 @@ pub fn make_auth_api_register_controller(name: &str) -> String {
 use serde_json::json;
 
 use {name}::{{AppError, Context, Hash, Jwt, ValidatedJson}};
-use crate::app::Http::Requests::register_request::RegisterRequest;
+use crate::app::http::requests::register_request::RegisterRequest;
 
 /// POST /api/auth/register
 pub async fn store(
@@ -1470,7 +1459,7 @@ pub async fn store(
 ) -> Result<impl IntoResponse, AppError> {{
     let hashed = Hash::make(&req.password)?;
 
-    let u = sqlx::query_as::<_, crate::app::Models::User::User>(
+    let u = sqlx::query_as::<_, crate::app::models::user::User>(
         "INSERT INTO users (name, email, password) VALUES ($1, $2, $3) RETURNING *",
     )
     .bind(&req.name)
@@ -1499,21 +1488,38 @@ pub async fn store(
     )
 }
 
-pub fn auth_api_route_snippet() -> &'static str {
-    r#"NOTE: make:auth --api injects routes automatically into src/routes/api.rs.
-      Controllers use ValidatedJson<T> and return JSON, not redirects.
-"#
-}
-
 fn pascal_to_snake(name: &str) -> String {
     let mut result = String::new();
-    for (i, ch) in name.chars().enumerate() {
-        if ch.is_uppercase() && i > 0 {
-            result.push('_');
+    let chars: Vec<char> = name.chars().collect();
+
+    for (i, &ch) in chars.iter().enumerate() {
+        if ch.is_uppercase() {
+            let prev = i.checked_sub(1).and_then(|idx| chars.get(idx)).copied();
+            let next = chars.get(i + 1).copied();
+            let boundary_after_lower = prev
+                .map(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+                .unwrap_or(false);
+            let boundary_before_word = prev
+                .map(|c| c.is_uppercase())
+                .unwrap_or(false)
+                && next.map(|c| c.is_ascii_lowercase()).unwrap_or(false);
+
+            if (boundary_after_lower || boundary_before_word) && !result.ends_with('_') && !result.is_empty() {
+                result.push('_');
+            }
+            for lower in ch.to_lowercase() {
+                result.push(lower);
+            }
+        } else if ch == '-' || ch == ' ' || ch == '/' || ch == '\\' {
+            if !result.ends_with('_') && !result.is_empty() {
+                result.push('_');
+            }
+        } else {
+            result.push(ch);
         }
-        result.push(ch.to_lowercase().next().unwrap());
     }
-    result
+
+    result.trim_matches('_').to_string()
 }
 
 pub fn gitignore() -> &'static str {
@@ -1872,7 +1878,7 @@ mod tests {
             "ApiLoginController must have destroy() for POST /api/auth/logout");
     }
 
-    // Invariant: no template may use #[path] — it is permanently banned
+    // Invariant: no template may use #[path]  Eit is permanently banned
     #[test]
     fn no_template_uses_path_attribute() {
         let cases: &[(&str, &str)] = &[
@@ -2132,11 +2138,11 @@ mod tests {
     fn api_42_me_uses_auth_id() {
         assert!(make_auth_api_login_controller("my_app").contains("auth.id"));
     }
-    // api_43. imports from crate::app::Http::Requests::login_request
+    // api_43. imports from crate::app::http::requests::login_request
     #[test]
     fn api_43_imports_from_requests_module() {
         assert!(make_auth_api_login_controller("my_app")
-            .contains("crate::app::Http::Requests::login_request"));
+            .contains("crate::app::http::requests::login_request"));
     }
     // api_44. uses provided crate name in runtime import
     #[test]
@@ -2452,11 +2458,11 @@ mod tests {
         let store_pos = out.find("pub async fn store(").unwrap();
         assert!(out[store_pos..].contains("use validator::Validate"));
     }
-    // web_43. imports from crate::app::Http::Requests::login_request
+    // web_43. imports from crate::app::http::requests::login_request
     #[test]
     fn web_lc_43_imports_from_requests_module() {
         assert!(make_auth_login_controller("my_app")
-            .contains("crate::app::Http::Requests::login_request"));
+            .contains("crate::app::http::requests::login_request"));
     }
     // web_44. uses crate name in runtime import
     #[test]
@@ -2824,7 +2830,7 @@ mod tests {
     fn arc_10_response_includes_token() {
         assert!(make_auth_api_register_controller("my_app").contains("\"token\""));
     }
-    // arc_11. behavior: email duplicate → Conflict with message
+    // arc_11. behavior: email duplicate ↁEConflict with message
     #[test]
     fn arc_11_email_duplicate_is_conflict() {
         let out = make_auth_api_register_controller("my_app");

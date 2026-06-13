@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 
 pub fn execute(name: &str) -> Result<()> {
-    println!("🌿 Creating new Willow Forge application: {}", name);
+    println!("Creating new Willow Forge application: {}", name);
 
     let app_path = Path::new(name);
 
@@ -21,7 +21,7 @@ pub fn execute(name: &str) -> Result<()> {
     create_directory_structure(app_path)?;
     generate_files(app_path, name)?;
 
-    println!("✓ Application created successfully!");
+    println!("Application created successfully!");
     println!("\nNext steps:");
     println!("  cd {}", name);
     println!("  cargo run");
@@ -31,11 +31,11 @@ pub fn execute(name: &str) -> Result<()> {
 
 fn create_directory_structure(base: &Path) -> Result<()> {
     let dirs = vec![
-        "src/app/Http/Controllers",
-        "src/app/Http/Middleware",
-        "src/app/Http/Requests",
-        "src/app/Models",
-        "src/app/Exceptions",
+        "src/app/http/controllers",
+        "src/app/http/middleware",
+        "src/app/http/requests",
+        "src/app/models",
+        "src/app/exceptions",
         "src/routes",
         "src/config",
         "src/database/migrations",
@@ -85,19 +85,19 @@ fn generate_files(base: &Path, name: &str) -> Result<()> {
 
     // src/app/
     fs::write(base.join("src/app/mod.rs"), app_files::src_app_mod_rs())?;
-    fs::write(base.join("src/app/Http/mod.rs"), app_files::src_app_http_mod_rs())?;
-    fs::write(base.join("src/app/Http/Controllers/mod.rs"), app_files::src_app_http_controllers_mod_rs())?;
-    fs::write(base.join("src/app/Http/Controllers/HomeController.rs"), app_files::home_controller(&crate_name))?;
-    fs::write(base.join("src/app/Http/Controllers/UserController.rs"), app_files::user_controller(&crate_name))?;
-    fs::write(base.join("src/app/Http/Controllers/StatusController.rs"), app_files::status_controller(&crate_name))?;
-    fs::write(base.join("src/app/Http/Middleware/mod.rs"), app_files::src_app_http_middleware_mod_rs())?;
-    fs::write(base.join("src/app/Http/Middleware/LogRequest.rs"), app_files::middleware_log_request_rs())?;
-    fs::write(base.join("src/app/Http/Requests/mod.rs"), app_files::src_app_http_requests_mod_rs())?;
-    fs::write(base.join("src/app/Http/Requests/StoreUserRequest.rs"), app_files::store_user_request())?;
-    fs::write(base.join("src/app/Models/mod.rs"), app_files::src_app_models_mod_rs())?;
-    fs::write(base.join("src/app/Models/User.rs"), app_files::user_model_rs())?;
-    fs::write(base.join("src/app/Exceptions/mod.rs"), app_files::src_app_exceptions_mod_rs())?;
-    fs::write(base.join("src/app/Exceptions/Handler.rs"), app_files::exception_handler_rs(&crate_name))?;
+    fs::write(base.join("src/app/http/mod.rs"), app_files::src_app_http_mod_rs())?;
+    fs::write(base.join("src/app/http/controllers/mod.rs"), app_files::src_app_http_controllers_mod_rs())?;
+    fs::write(base.join("src/app/http/controllers/home_controller.rs"), app_files::home_controller(&crate_name))?;
+    fs::write(base.join("src/app/http/controllers/user_controller.rs"), app_files::user_controller(&crate_name))?;
+    fs::write(base.join("src/app/http/controllers/status_controller.rs"), app_files::status_controller(&crate_name))?;
+    fs::write(base.join("src/app/http/middleware/mod.rs"), app_files::src_app_http_middleware_mod_rs())?;
+    fs::write(base.join("src/app/http/middleware/log_request.rs"), app_files::middleware_log_request_rs())?;
+    fs::write(base.join("src/app/http/requests/mod.rs"), app_files::src_app_http_requests_mod_rs())?;
+    fs::write(base.join("src/app/http/requests/store_user_request.rs"), app_files::store_user_request())?;
+    fs::write(base.join("src/app/models/mod.rs"), app_files::src_app_models_mod_rs())?;
+    fs::write(base.join("src/app/models/user.rs"), app_files::user_model_rs())?;
+    fs::write(base.join("src/app/exceptions/mod.rs"), app_files::src_app_exceptions_mod_rs())?;
+    fs::write(base.join("src/app/exceptions/handler.rs"), app_files::exception_handler_rs(&crate_name))?;
 
     // src/routes/
     fs::write(base.join("src/routes/mod.rs"), app_files::src_routes_mod_rs())?;

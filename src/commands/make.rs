@@ -2,11 +2,49 @@ use anyhow::{Context, Result};
 use std::fs;
 use std::path::Path;
 
+fn to_snake_case(name: &str) -> String {
+    let mut out = String::new();
+    let chars: Vec<char> = name.chars().collect();
+
+    for (i, &ch) in chars.iter().enumerate() {
+        if ch == '-' || ch == ' ' || ch == '/' || ch == '\\' {
+            if !out.ends_with('_') && !out.is_empty() {
+                out.push('_');
+            }
+            continue;
+        }
+
+        if ch.is_uppercase() {
+            let prev = i.checked_sub(1).and_then(|idx| chars.get(idx)).copied();
+            let next = chars.get(i + 1).copied();
+            let boundary_after_lower = prev
+                .map(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+                .unwrap_or(false);
+            let boundary_before_word = prev
+                .map(|c| c.is_uppercase())
+                .unwrap_or(false)
+                && next.map(|c| c.is_ascii_lowercase()).unwrap_or(false);
+
+            if (boundary_after_lower || boundary_before_word) && !out.ends_with('_') && !out.is_empty() {
+                out.push('_');
+            }
+            for lower in ch.to_lowercase() {
+                out.push(lower);
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+
+    out.trim_matches('_').to_string()
+}
+
 fn inject_mod_decl(mod_file: &str, mod_name: &str) -> Result<()> {
     let path = Path::new(mod_file);
     if !path.exists() {
         return Ok(());
     }
+    let mod_name = to_snake_case(mod_name);
     let content = fs::read_to_string(path)
         .with_context(|| format!("Could not read {}", mod_file))?;
     let decl = format!("pub mod {};", mod_name);
@@ -111,7 +149,8 @@ fn migration_down_content(name: &str, created: &str) -> String {
 }
 
 pub fn controller(name: &str) -> Result<()> {
-    let path = Path::new("src/app/Http/Controllers").join(format!("{}.rs", name));
+    let module_name = to_snake_case(name);
+    let path = Path::new("src/app/http/controllers").join(format!("{}.rs", module_name));
 
     if path.exists() {
         anyhow::bail!("Controller already exists: {}", path.display());
@@ -120,14 +159,15 @@ pub fn controller(name: &str) -> Result<()> {
     fs::write(&path, controller_content(name))
         .with_context(|| format!("Failed to create controller: {}", path.display()))?;
 
-    inject_mod_decl("src/app/Http/Controllers/mod.rs", name)?;
+    inject_mod_decl("src/app/http/controllers/mod.rs", &module_name)?;
 
-    println!("✓ Controller created: {}", path.display());
+    println!("Controller created: {}", path.display());
     Ok(())
 }
 
 pub fn request(name: &str) -> Result<()> {
-    let path = Path::new("src/app/Http/Requests").join(format!("{}.rs", name));
+    let module_name = to_snake_case(name);
+    let path = Path::new("src/app/http/requests").join(format!("{}.rs", module_name));
 
     if path.exists() {
         anyhow::bail!("Request already exists: {}", path.display());
@@ -136,14 +176,15 @@ pub fn request(name: &str) -> Result<()> {
     fs::write(&path, request_content(name))
         .with_context(|| format!("Failed to create request: {}", path.display()))?;
 
-    inject_mod_decl("src/app/Http/Requests/mod.rs", name)?;
+    inject_mod_decl("src/app/http/requests/mod.rs", &module_name)?;
 
-    println!("✓ Request created: {}", path.display());
+    println!("Request created: {}", path.display());
     Ok(())
 }
 
 pub fn model(name: &str) -> Result<()> {
-    let path = Path::new("src/app/Models").join(format!("{}.rs", name));
+    let module_name = to_snake_case(name);
+    let path = Path::new("src/app/models").join(format!("{}.rs", module_name));
 
     if path.exists() {
         anyhow::bail!("Model already exists: {}", path.display());
@@ -152,9 +193,9 @@ pub fn model(name: &str) -> Result<()> {
     fs::write(&path, model_content(name))
         .with_context(|| format!("Failed to create model: {}", path.display()))?;
 
-    inject_mod_decl("src/app/Models/mod.rs", name)?;
+    inject_mod_decl("src/app/models/mod.rs", &module_name)?;
 
-    println!("✓ Model created: {}", path.display());
+    println!("Model created: {}", path.display());
     Ok(())
 }
 
@@ -182,12 +223,13 @@ pub fn view_file(name: &str) -> Result<()> {
     fs::write(&file_path, view_template_content(name))
         .with_context(|| format!("Failed to create view: {}", file_path.display()))?;
 
-    println!("✓ View created: {}", file_path.display());
+    println!("View created: {}", file_path.display());
     Ok(())
 }
 
 pub fn middleware(name: &str) -> Result<()> {
-    let path = Path::new("src/app/Http/Middleware").join(format!("{}.rs", name));
+    let module_name = to_snake_case(name);
+    let path = Path::new("src/app/http/middleware").join(format!("{}.rs", module_name));
 
     if path.exists() {
         anyhow::bail!("Middleware already exists: {}", path.display());
@@ -198,9 +240,9 @@ pub fn middleware(name: &str) -> Result<()> {
     fs::write(&path, &content)
         .with_context(|| format!("Failed to create middleware: {}", path.display()))?;
 
-    inject_mod_decl("src/app/Http/Middleware/mod.rs", name)?;
+    inject_mod_decl("src/app/http/middleware/mod.rs", &module_name)?;
 
-    println!("✓ Middleware created: {}", path.display());
+    println!("Middleware created: {}", path.display());
     Ok(())
 }
 
@@ -219,14 +261,14 @@ pub fn migration(name: &str) -> Result<()> {
     fs::write(&down_path, migration_down_content(name, &created))
         .with_context(|| format!("Failed to write {}", down_path.display()))?;
 
-    println!("✓ Created: {}", up_path.display());
-    println!("✓ Created: {}", down_path.display());
+    println!("Created: {}", up_path.display());
+    println!("Created: {}", down_path.display());
     Ok(())
 }
 
 fn read_crate_name() -> Result<String> {
     let raw = fs::read_to_string("Cargo.toml")
-        .with_context(|| "Could not read Cargo.toml — run this command from your app root")?;
+        .with_context(|| "Could not read Cargo.toml - run this command from your app root")?;
     for line in raw.lines() {
         let line = line.trim();
         if let Some(rest) = line.strip_prefix("name") {
@@ -270,8 +312,8 @@ fn ensure_users_migration() -> Result<()> {
     fs::write(&down_path, crate::templates::app_files::initial_migration_down_sql())
         .with_context(|| format!("Failed to write {}", down_path.display()))?;
 
-    println!("✓ Created: {}", up_path.display());
-    println!("✓ Created: {}", down_path.display());
+    println!("Created: {}", up_path.display());
+    println!("Created: {}", down_path.display());
     Ok(())
 }
 
@@ -281,8 +323,8 @@ pub fn auth(api: bool) -> Result<()> {
     ensure_users_migration()?;
 
     let dirs: &[&str] = &[
-        "src/app/Http/Controllers/Auth",
-        "src/app/Http/Requests",
+        "src/app/http/controllers/auth",
+        "src/app/http/requests",
         if api { "" } else { "src/resources/views/auth" },
     ];
     for dir in dirs.iter().filter(|d| !d.is_empty()) {
@@ -290,21 +332,21 @@ pub fn auth(api: bool) -> Result<()> {
             .with_context(|| format!("Failed to create directory: {}", dir))?;
     }
 
-    let auth_mod = "src/app/Http/Controllers/Auth/mod.rs";
+    let auth_mod = "src/app/http/controllers/auth/mod.rs";
     let auth_mod_decls = if api {
-        "pub mod ApiLoginController;\npub mod ApiRegisterController;\n"
+        "pub mod api_login_controller;\npub mod api_register_controller;\n"
     } else {
-        "pub mod LoginController;\npub mod RegisterController;\n"
+        "pub mod login_controller;\npub mod register_controller;\n"
     };
     if !Path::new(auth_mod).exists() {
         fs::write(auth_mod, auth_mod_decls)
             .with_context(|| format!("Failed to write {}", auth_mod))?;
-        println!("✓ Created: {}", auth_mod);
+        println!("Created: {}", auth_mod);
     } else {
         let existing = fs::read_to_string(auth_mod)
             .with_context(|| format!("Could not read {}", auth_mod))?;
-        let decl_a = if api { "pub mod ApiLoginController;" } else { "pub mod LoginController;" };
-        let decl_b = if api { "pub mod ApiRegisterController;" } else { "pub mod RegisterController;" };
+        let decl_a = if api { "pub mod api_login_controller;" } else { "pub mod login_controller;" };
+        let decl_b = if api { "pub mod api_register_controller;" } else { "pub mod register_controller;" };
         let mut updated = existing.clone();
         if !updated.contains(decl_a) {
             updated = format!("{}\n{}", updated.trim_end(), format!("\n{}", decl_a));
@@ -320,35 +362,35 @@ pub fn auth(api: bool) -> Result<()> {
 
     let mut files: Vec<(&str, String)> = vec![
         (
-            "src/app/Http/Requests/login_request.rs",
+            "src/app/http/requests/login_request.rs",
             crate::templates::app_files::make_auth_login_request().to_string(),
         ),
         (
-            "src/app/Http/Requests/register_request.rs",
+            "src/app/http/requests/register_request.rs",
             crate::templates::app_files::make_auth_register_request().to_string(),
         ),
     ];
 
     if api {
         files.push((
-            "src/app/Http/Controllers/Auth/ApiLoginController.rs",
+            "src/app/http/controllers/auth/api_login_controller.rs",
             crate::templates::app_files::make_auth_api_login_controller(&crate_name),
         ));
         files.push((
-            "src/app/Http/Controllers/Auth/ApiRegisterController.rs",
+            "src/app/http/controllers/auth/api_register_controller.rs",
             crate::templates::app_files::make_auth_api_register_controller(&crate_name),
         ));
     } else {
         files.push((
-            "src/app/Http/Controllers/Auth/LoginController.rs",
+            "src/app/http/controllers/auth/login_controller.rs",
             crate::templates::app_files::make_auth_login_controller(&crate_name),
         ));
         files.push((
-            "src/app/Http/Controllers/Auth/RegisterController.rs",
+            "src/app/http/controllers/auth/register_controller.rs",
             crate::templates::app_files::make_auth_register_controller(&crate_name),
         ));
         files.push((
-            "src/app/Http/Controllers/DashboardController.rs",
+            "src/app/http/controllers/dashboard_controller.rs",
             crate::templates::app_files::make_auth_dashboard_controller(&crate_name),
         ));
         files.push((
@@ -372,31 +414,31 @@ pub fn auth(api: bool) -> Result<()> {
             continue;
         }
         fs::write(p, content).with_context(|| format!("Failed to write: {}", path))?;
-        println!("✓ Created: {}", path);
+        println!("Created: {}", path);
     }
 
-    inject_mod_decl("src/app/Http/Controllers/mod.rs", "Auth")?;
-    inject_mod_decl("src/app/Http/Requests/mod.rs", "login_request")?;
-    inject_mod_decl("src/app/Http/Requests/mod.rs", "register_request")?;
+    inject_mod_decl("src/app/http/controllers/mod.rs", "auth")?;
+    inject_mod_decl("src/app/http/requests/mod.rs", "login_request")?;
+    inject_mod_decl("src/app/http/requests/mod.rs", "register_request")?;
 
     if api {
         let use_decl =
-            "use crate::app::Http::Controllers::Auth::{ApiLoginController, ApiRegisterController};";
+            "use crate::app::http::controllers::auth::{api_login_controller, api_register_controller};";
         let route_lines = "\n        \
-.route(\"/api/auth/login\",    post(ApiLoginController::store))\n        \
-.route(\"/api/auth/refresh\",  post(ApiLoginController::refresh))\n        \
-.route(\"/api/auth/logout\",   post(ApiLoginController::destroy))\n        \
-.route(\"/api/auth/register\", post(ApiRegisterController::store))\n        \
-.route(\"/api/me\",            get(ApiLoginController::me))";
+.route(\"/api/auth/login\",    post(api_login_controller::store))\n        \
+.route(\"/api/auth/refresh\",  post(api_login_controller::refresh))\n        \
+.route(\"/api/auth/logout\",   post(api_login_controller::destroy))\n        \
+.route(\"/api/auth/register\", post(api_register_controller::store))\n        \
+.route(\"/api/me\",            get(api_login_controller::me))";
         inject_auth_into_routes("src/routes/api.rs", use_decl, route_lines)?;
     } else {
-        inject_mod_decl("src/app/Http/Controllers/mod.rs", "DashboardController")?;
-        let use_decl = "use crate::app::Http::Controllers::Auth::{LoginController, RegisterController};\nuse crate::app::Http::Controllers::DashboardController;";
+        inject_mod_decl("src/app/http/controllers/mod.rs", "dashboard_controller")?;
+        let use_decl = "use crate::app::http::controllers::auth::{login_controller, register_controller};\nuse crate::app::http::controllers::dashboard_controller;";
         let route_lines = "\n        \
-.route(\"/login\",    get(LoginController::show).post(LoginController::store))\n        \
-.route(\"/logout\",   post(LoginController::destroy))\n        \
-.route(\"/register\", get(RegisterController::show).post(RegisterController::store))\n        \
-.route(\"/dashboard\", get(DashboardController::index))";
+.route(\"/login\",    get(login_controller::show).post(login_controller::store))\n        \
+.route(\"/logout\",   post(login_controller::destroy))\n        \
+.route(\"/register\", get(register_controller::show).post(register_controller::store))\n        \
+.route(\"/dashboard\", get(dashboard_controller::index))";
         inject_auth_into_routes("src/routes/web.rs", use_decl, route_lines)?;
     }
 
@@ -406,15 +448,15 @@ pub fn auth(api: bool) -> Result<()> {
 fn inject_auth_into_routes(routes_path: &str, use_decl: &str, route_lines: &str) -> Result<()> {
     let path = Path::new(routes_path);
     if !path.exists() {
-        println!("  Warning: {} not found — add routes manually.", routes_path);
+        println!("  Warning: {} not found - add routes manually.", routes_path);
         return Ok(());
     }
 
     let content = fs::read_to_string(path)
         .with_context(|| format!("Could not read {}", routes_path))?;
 
-    if content.contains("Controllers::Auth::") {
-        println!("  Routes already present in {} — skipping.", routes_path);
+    if content.contains("controllers::auth::") {
+        println!("  Routes already present in {} - skipping.", routes_path);
         return Ok(());
     }
 
@@ -452,7 +494,7 @@ fn inject_auth_into_routes(routes_path: &str, use_decl: &str, route_lines: &str)
     fs::write(path, &content)
         .with_context(|| format!("Could not write {}", routes_path))?;
 
-    println!("✓ Routes injected into {}", routes_path);
+    println!("Routes injected into {}", routes_path);
     Ok(())
 }
 
@@ -465,6 +507,14 @@ mod tests {
 
     fn tmp() -> TempDir { tempfile::tempdir().unwrap() }
 
+    #[test]
+    fn snake_case_names_follow_rust_module_conventions() {
+        assert_eq!(to_snake_case("BlogController"), "blog_controller");
+        assert_eq!(to_snake_case("StoreBlogRequest"), "store_blog_request");
+        assert_eq!(to_snake_case("APIClientMiddleware"), "api_client_middleware");
+        assert_eq!(to_snake_case("admin/users/ShowUser"), "admin_users_show_user");
+    }
+
     fn api_content() -> String {
         "use axum::{routing::get, Router};\nuse my_app::AppState;\nuse std::sync::Arc;\n\npub fn routes() -> Router<Arc<AppState>> {\n    Router::new()\n        .route(\"/api/status\", get(status))\n}\n".into()
     }
@@ -474,16 +524,16 @@ mod tests {
     }
 
     fn api_use() -> &'static str {
-        "use crate::app::Http::Controllers::Auth::{ApiLoginController, ApiRegisterController};"
+        "use crate::app::http::controllers::auth::{api_login_controller, api_register_controller};"
     }
     fn api_routes() -> &'static str {
-        "\n        .route(\"/api/auth/login\",    post(ApiLoginController::store))\n        .route(\"/api/auth/refresh\",  post(ApiLoginController::refresh))\n        .route(\"/api/auth/logout\",   post(ApiLoginController::destroy))\n        .route(\"/api/auth/register\", post(ApiRegisterController::store))\n        .route(\"/api/me\",            get(ApiLoginController::me))"
+        "\n        .route(\"/api/auth/login\",    post(api_login_controller::store))\n        .route(\"/api/auth/refresh\",  post(api_login_controller::refresh))\n        .route(\"/api/auth/logout\",   post(api_login_controller::destroy))\n        .route(\"/api/auth/register\", post(api_register_controller::store))\n        .route(\"/api/me\",            get(api_login_controller::me))"
     }
     fn web_use() -> &'static str {
-        "use crate::app::Http::Controllers::Auth::{LoginController, RegisterController};\nuse crate::app::Http::Controllers::DashboardController;"
+        "use crate::app::http::controllers::auth::{login_controller, register_controller};\nuse crate::app::http::controllers::dashboard_controller;"
     }
     fn web_routes() -> &'static str {
-        "\n        .route(\"/login\",    get(LoginController::show).post(LoginController::store))\n        .route(\"/logout\",   post(LoginController::destroy))\n        .route(\"/register\", get(RegisterController::show).post(RegisterController::store))\n        .route(\"/dashboard\", get(DashboardController::index))"
+        "\n        .route(\"/login\",    get(login_controller::show).post(login_controller::store))\n        .route(\"/logout\",   post(login_controller::destroy))\n        .route(\"/register\", get(register_controller::show).post(register_controller::store))\n        .route(\"/dashboard\", get(dashboard_controller::index))"
     }
 
     fn inject_api(f: &std::path::Path) {
@@ -510,7 +560,7 @@ mod tests {
 
     // ── inject_mod_decl (25) ───────────────────────────────────────────────────
 
-    // 1. empty file → decl added
+    // 1. empty file ↁEdecl added
     #[test]
     fn imd_01_empty_file_adds_decl() {
         let d = tmp(); let f = d.path().join("mod.rs");
@@ -518,7 +568,7 @@ mod tests {
         inject_mod_decl(f.to_str().unwrap(), "foo").unwrap();
         assert!(fs::read_to_string(&f).unwrap().contains("pub mod foo;"));
     }
-    // 2. non-empty file, absent → appended
+    // 2. non-empty file, absent ↁEappended
     #[test]
     fn imd_02_appends_when_absent() {
         let d = tmp(); let f = d.path().join("mod.rs");
@@ -527,7 +577,7 @@ mod tests {
         let c = fs::read_to_string(&f).unwrap();
         assert!(c.contains("pub mod foo;") && c.contains("pub mod bar;"));
     }
-    // 3. already present → no change
+    // 3. already present ↁEno change
     #[test]
     fn imd_03_no_op_when_present() {
         let d = tmp(); let f = d.path().join("mod.rs");
@@ -535,14 +585,14 @@ mod tests {
         inject_mod_decl(f.to_str().unwrap(), "foo").unwrap();
         assert_eq!(fs::read_to_string(&f).unwrap().matches("pub mod foo;").count(), 1);
     }
-    // 4. missing file → Ok, no file created
+    // 4. missing file ↁEOk, no file created
     #[test]
     fn imd_04_missing_file_ok() {
         let d = tmp(); let f = d.path().join("nope.rs");
         assert!(inject_mod_decl(f.to_str().unwrap(), "foo").is_ok());
         assert!(!f.exists());
     }
-    // 5. two calls same module → exactly one occurrence
+    // 5. two calls same module ↁEexactly one occurrence
     #[test]
     fn imd_05_two_calls_no_duplicate() {
         let d = tmp(); let f = d.path().join("mod.rs");
@@ -551,7 +601,7 @@ mod tests {
         inject_mod_decl(f.to_str().unwrap(), "foo").unwrap();
         assert_eq!(fs::read_to_string(&f).unwrap().matches("pub mod foo;").count(), 1);
     }
-    // 6. five calls same module → still one
+    // 6. five calls same module ↁEstill one
     #[test]
     fn imd_06_five_calls_no_duplicate() {
         let d = tmp(); let f = d.path().join("mod.rs");
@@ -559,7 +609,7 @@ mod tests {
         for _ in 0..5 { inject_mod_decl(f.to_str().unwrap(), "foo").unwrap(); }
         assert_eq!(fs::read_to_string(&f).unwrap().matches("pub mod foo;").count(), 1);
     }
-    // 7. two different modules → both present
+    // 7. two different modules ↁEboth present
     #[test]
     fn imd_07_two_different_both_added() {
         let d = tmp(); let f = d.path().join("mod.rs");
@@ -601,7 +651,7 @@ mod tests {
         let d = tmp(); let f = d.path().join("mod.rs");
         fs::write(&f, "").unwrap();
         inject_mod_decl(f.to_str().unwrap(), "Auth").unwrap();
-        assert!(fs::read_to_string(&f).unwrap().contains("pub mod Auth;"));
+        assert!(fs::read_to_string(&f).unwrap().contains("pub mod auth;"));
     }
     // 12. PascalCase (ApiLoginController)
     #[test]
@@ -609,7 +659,7 @@ mod tests {
         let d = tmp(); let f = d.path().join("mod.rs");
         fs::write(&f, "").unwrap();
         inject_mod_decl(f.to_str().unwrap(), "ApiLoginController").unwrap();
-        assert!(fs::read_to_string(&f).unwrap().contains("pub mod ApiLoginController;"));
+        assert!(fs::read_to_string(&f).unwrap().contains("pub mod api_login_controller;"));
     }
     // 13. PascalCase (ApiRegisterController)
     #[test]
@@ -617,9 +667,9 @@ mod tests {
         let d = tmp(); let f = d.path().join("mod.rs");
         fs::write(&f, "").unwrap();
         inject_mod_decl(f.to_str().unwrap(), "ApiRegisterController").unwrap();
-        assert!(fs::read_to_string(&f).unwrap().contains("pub mod ApiRegisterController;"));
+        assert!(fs::read_to_string(&f).unwrap().contains("pub mod api_register_controller;"));
     }
-    // 14. name is prefix of existing → both distinct
+    // 14. name is prefix of existing ↁEboth distinct
     #[test]
     fn imd_14_prefix_of_existing_both_present() {
         let d = tmp(); let f = d.path().join("mod.rs");
@@ -628,7 +678,7 @@ mod tests {
         let c = fs::read_to_string(&f).unwrap();
         assert!(c.contains("pub mod log_request;") && c.contains("pub mod log;"));
     }
-    // 15. existing is prefix of new → both distinct
+    // 15. existing is prefix of new ↁEboth distinct
     #[test]
     fn imd_15_existing_is_prefix_of_new() {
         let d = tmp(); let f = d.path().join("mod.rs");
@@ -637,16 +687,16 @@ mod tests {
         let c = fs::read_to_string(&f).unwrap();
         assert!(c.contains("pub mod log;") && c.contains("pub mod log_request;"));
     }
-    // 16. multiple existing → new appended
+    // 16. multiple existing ↁEnew appended
     #[test]
     fn imd_16_multiple_existing_appends_new() {
         let d = tmp(); let f = d.path().join("mod.rs");
         fs::write(&f, "pub mod a;\npub mod b;\npub mod c;\n").unwrap();
         inject_mod_decl(f.to_str().unwrap(), "d").unwrap();
         let c = fs::read_to_string(&f).unwrap();
-        for m in &["a", "b", "c", "d"] { assert!(c.contains(&format!("pub mod {};", m))); }
+        for m in &["a", "b", "c", "d"] { assert!(c.contains(&format!("pub mod {};", to_snake_case(m)))); }
     }
-    // 17. duplicate of first in multiple → not duplicated
+    // 17. duplicate of first in multiple ↁEnot duplicated
     #[test]
     fn imd_17_no_dup_first_in_multiple() {
         let d = tmp(); let f = d.path().join("mod.rs");
@@ -654,7 +704,7 @@ mod tests {
         inject_mod_decl(f.to_str().unwrap(), "a").unwrap();
         assert_eq!(fs::read_to_string(&f).unwrap().matches("pub mod a;").count(), 1);
     }
-    // 18. duplicate of last in multiple → not duplicated
+    // 18. duplicate of last in multiple ↁEnot duplicated
     #[test]
     fn imd_18_no_dup_last_in_multiple() {
         let d = tmp(); let f = d.path().join("mod.rs");
@@ -662,7 +712,7 @@ mod tests {
         inject_mod_decl(f.to_str().unwrap(), "c").unwrap();
         assert_eq!(fs::read_to_string(&f).unwrap().matches("pub mod c;").count(), 1);
     }
-    // 19. file without trailing newline → injection still works
+    // 19. file without trailing newline ↁEinjection still works
     #[test]
     fn imd_19_no_trailing_newline() {
         let d = tmp(); let f = d.path().join("mod.rs");
@@ -678,7 +728,7 @@ mod tests {
         inject_mod_decl(f.to_str().unwrap(), "foo").unwrap();
         assert!(fs::read_to_string(&f).unwrap().ends_with('\n'));
     }
-    // 21. whitespace-only file → decl added
+    // 21. whitespace-only file ↁEdecl added
     #[test]
     fn imd_21_whitespace_only_file() {
         let d = tmp(); let f = d.path().join("mod.rs");
@@ -693,27 +743,27 @@ mod tests {
         fs::write(&f, "").unwrap();
         assert!(inject_mod_decl(f.to_str().unwrap(), "foo").is_ok());
     }
-    // 23. three modules in sequence → each exactly once
+    // 23. three modules in sequence ↁEeach exactly once
     #[test]
     fn imd_23_three_modules_each_once() {
         let d = tmp(); let f = d.path().join("mod.rs");
         fs::write(&f, "").unwrap();
         for m in &["a", "b", "c"] { inject_mod_decl(f.to_str().unwrap(), m).unwrap(); }
         let c = fs::read_to_string(&f).unwrap();
-        for m in &["a", "b", "c"] { assert_eq!(c.matches(&format!("pub mod {};", m)).count(), 1); }
+        for m in &["a", "b", "c"] { assert_eq!(c.matches(&format!("pub mod {};", to_snake_case(m))).count(), 1); }
     }
-    // 24. realistic Controllers/mod.rs: HomeController, UserController, then Auth
+    // 24. realistic Controllers/mod.rs: home_controller, user_controller, then Auth
     #[test]
     fn imd_24_realistic_controllers_mod() {
         let d = tmp(); let f = d.path().join("mod.rs");
-        fs::write(&f, "pub mod HomeController;\npub mod UserController;\npub mod StatusController;\n").unwrap();
+        fs::write(&f, "pub mod home_controller;\npub mod user_controller;\npub mod status_controller;\n").unwrap();
         inject_mod_decl(f.to_str().unwrap(), "Auth").unwrap();
         let c = fs::read_to_string(&f).unwrap();
         for m in &["HomeController", "UserController", "StatusController", "Auth"] {
-            assert_eq!(c.matches(&format!("pub mod {};", m)).count(), 1, "{} must appear once", m);
+            assert_eq!(c.matches(&format!("pub mod {};", to_snake_case(m))).count(), 1, "{} must appear once", m);
         }
     }
-    // 25. inject login_request then register_request → both in Requests/mod.rs
+    // 25. inject login_request then register_request ↁEboth in Requests/mod.rs
     #[test]
     fn imd_25_login_and_register_request_both_present() {
         let d = tmp(); let f = d.path().join("mod.rs");
@@ -724,7 +774,7 @@ mod tests {
         assert!(c.contains("pub mod login_request;") && c.contains("pub mod register_request;"));
     }
 
-    // ── inject_auth_into_routes — API (35) ────────────────────────────────────
+    // ── inject_auth_into_routes  EAPI (35) ────────────────────────────────────
 
     // 26. /api/auth/login injected
     #[test]
@@ -759,14 +809,14 @@ mod tests {
     fn api_30_use_decl_has_api_login_controller() {
         let d = tmp(); let f = d.path().join("api.rs");
         fs::write(&f, api_content()).unwrap(); inject_api(&f);
-        assert!(fs::read_to_string(&f).unwrap().contains("ApiLoginController"));
+        assert!(fs::read_to_string(&f).unwrap().contains("api_login_controller"));
     }
     // 31. use_decl contains ApiRegisterController
     #[test]
     fn api_31_use_decl_has_api_register_controller() {
         let d = tmp(); let f = d.path().join("api.rs");
         fs::write(&f, api_content()).unwrap(); inject_api(&f);
-        assert!(fs::read_to_string(&f).unwrap().contains("ApiRegisterController"));
+        assert!(fs::read_to_string(&f).unwrap().contains("api_register_controller"));
     }
     // 32. use_decl placed before pub fn routes
     #[test]
@@ -774,7 +824,7 @@ mod tests {
         let d = tmp(); let f = d.path().join("api.rs");
         fs::write(&f, api_content()).unwrap(); inject_api(&f);
         let c = fs::read_to_string(&f).unwrap();
-        assert!(c.find("ApiLoginController").unwrap() < c.find("pub fn routes").unwrap());
+        assert!(c.find("api_login_controller").unwrap() < c.find("pub fn routes").unwrap());
     }
     // 33. route_lines before closing brace
     #[test]
@@ -798,7 +848,7 @@ mod tests {
         fs::write(&f, api_content()).unwrap(); inject_api(&f);
         assert!(!fs::read_to_string(&f).unwrap().contains("#[path"));
     }
-    // 36. routing::get, → routing::{get, post},
+    // 36. routing::get, ↁErouting::{get, post},
     #[test]
     fn api_36_routing_get_comma_replaced() {
         let d = tmp(); let f = d.path().join("api.rs");
@@ -812,7 +862,7 @@ mod tests {
         fs::write(&f, api_content()).unwrap(); inject_api(&f);
         assert!(!fs::read_to_string(&f).unwrap().contains("routing::get,"));
     }
-    // 38. already has routing::{get, post} → not doubled
+    // 38. already has routing::{get, post} ↁEnot doubled
     #[test]
     fn api_38_already_has_get_post_not_doubled() {
         let d = tmp(); let f = d.path().join("api.rs");
@@ -820,7 +870,7 @@ mod tests {
         fs::write(&f, &c).unwrap(); inject_api(&f);
         assert_eq!(fs::read_to_string(&f).unwrap().matches("routing::{get, post}").count(), 1);
     }
-    // 39. routing::get} → routing::{get, post}}
+    // 39. routing::get} ↁErouting::{get, post}}
     #[test]
     fn api_39_routing_get_brace_replaced() {
         let d = tmp(); let f = d.path().join("api.rs");
@@ -861,9 +911,9 @@ mod tests {
     fn api_44_idempotent_use_decl() {
         let d = tmp(); let f = d.path().join("api.rs");
         fs::write(&f, api_content()).unwrap(); inject_api(&f); inject_api(&f);
-        assert_eq!(fs::read_to_string(&f).unwrap().matches("ApiLoginController, ApiRegisterController").count(), 1);
+        assert_eq!(fs::read_to_string(&f).unwrap().matches("api_login_controller, api_register_controller").count(), 1);
     }
-    // 45. five calls → each route still exactly once
+    // 45. five calls ↁEeach route still exactly once
     #[test]
     fn api_45_five_calls_each_once() {
         let d = tmp(); let f = d.path().join("api.rs");
@@ -874,21 +924,21 @@ mod tests {
             assert_eq!(c.matches(route).count(), 1, "{} must appear exactly once", route);
         }
     }
-    // 46. missing file → Ok, not created
+    // 46. missing file ↁEOk, not created
     #[test]
     fn api_46_missing_file_ok() {
         let d = tmp(); let f = d.path().join("nope.rs");
         assert!(inject_auth_into_routes(f.to_str().unwrap(), api_use(), api_routes()).is_ok());
         assert!(!f.exists());
     }
-    // 47. no pub fn routes → Err
+    // 47. no pub fn routes ↁEErr
     #[test]
     fn api_47_no_pub_fn_routes_err() {
         let d = tmp(); let f = d.path().join("api.rs");
         fs::write(&f, "use axum::Router;\nfn not_routes() {}\n").unwrap();
         assert!(inject_auth_into_routes(f.to_str().unwrap(), api_use(), api_routes()).is_err());
     }
-    // 48. no closing brace → Err
+    // 48. no closing brace ↁEErr
     #[test]
     fn api_48_no_closing_brace_err() {
         let d = tmp(); let f = d.path().join("api.rs");
@@ -900,35 +950,35 @@ mod tests {
     fn api_49_uses_crate_path() {
         let d = tmp(); let f = d.path().join("api.rs");
         fs::write(&f, api_content()).unwrap(); inject_api(&f);
-        assert!(fs::read_to_string(&f).unwrap().contains("use crate::app::Http::Controllers::Auth::"));
+        assert!(fs::read_to_string(&f).unwrap().contains("use crate::app::http::controllers::auth::"));
     }
-    // 50. ApiLoginController::store present
+    // 50. api_login_controller::store present
     #[test]
     fn api_50_login_store_present() {
         let d = tmp(); let f = d.path().join("api.rs");
         fs::write(&f, api_content()).unwrap(); inject_api(&f);
-        assert!(fs::read_to_string(&f).unwrap().contains("ApiLoginController::store"));
+        assert!(fs::read_to_string(&f).unwrap().contains("api_login_controller::store"));
     }
-    // 51. ApiLoginController::refresh present
+    // 51. api_login_controller::refresh present
     #[test]
     fn api_51_login_refresh_present() {
         let d = tmp(); let f = d.path().join("api.rs");
         fs::write(&f, api_content()).unwrap(); inject_api(&f);
-        assert!(fs::read_to_string(&f).unwrap().contains("ApiLoginController::refresh"));
+        assert!(fs::read_to_string(&f).unwrap().contains("api_login_controller::refresh"));
     }
-    // 52. ApiLoginController::destroy present
+    // 52. api_login_controller::destroy present
     #[test]
     fn api_52_login_destroy_present() {
         let d = tmp(); let f = d.path().join("api.rs");
         fs::write(&f, api_content()).unwrap(); inject_api(&f);
-        assert!(fs::read_to_string(&f).unwrap().contains("ApiLoginController::destroy"));
+        assert!(fs::read_to_string(&f).unwrap().contains("api_login_controller::destroy"));
     }
-    // 53. ApiRegisterController::store present
+    // 53. api_register_controller::store present
     #[test]
     fn api_53_register_store_present() {
         let d = tmp(); let f = d.path().join("api.rs");
         fs::write(&f, api_content()).unwrap(); inject_api(&f);
-        assert!(fs::read_to_string(&f).unwrap().contains("ApiRegisterController::store"));
+        assert!(fs::read_to_string(&f).unwrap().contains("api_register_controller::store"));
     }
     // 54. multiple existing routes all preserved
     #[test]
@@ -941,11 +991,11 @@ mod tests {
             assert!(c.contains(r), "missing {}", r);
         }
     }
-    // 55. already has Controllers::Auth:: marker → skip, Ok returned
+    // 55. already has controllers::auth:: marker ↁEskip, Ok returned
     #[test]
     fn api_55_skip_when_marker_present() {
         let d = tmp(); let f = d.path().join("api.rs");
-        let c = format!("{}\n// Controllers::Auth:: here", api_content());
+        let c = format!("{}\n// controllers::auth:: here", api_content());
         fs::write(&f, &c).unwrap();
         assert!(inject_auth_into_routes(f.to_str().unwrap(), api_use(), api_routes()).is_ok());
         assert!(!fs::read_to_string(&f).unwrap().contains("/api/auth/login"));
@@ -963,9 +1013,9 @@ mod tests {
     fn api_57_login_uses_post() {
         let d = tmp(); let f = d.path().join("api.rs");
         fs::write(&f, api_content()).unwrap(); inject_api(&f);
-        assert!(fs::read_to_string(&f).unwrap().contains("post(ApiLoginController::store)"));
+        assert!(fs::read_to_string(&f).unwrap().contains("post(api_login_controller::store)"));
     }
-    // 58. no routing import at all → no crash, routes added
+    // 58. no routing import at all ↁEno crash, routes added
     #[test]
     fn api_58_no_routing_import_no_crash() {
         let d = tmp(); let f = d.path().join("api.rs");
@@ -973,7 +1023,7 @@ mod tests {
         fs::write(&f, c).unwrap(); inject_api(&f);
         assert!(fs::read_to_string(&f).unwrap().contains("/api/auth/login"));
     }
-    // 59. empty routes body → routes added
+    // 59. empty routes body ↁEroutes added
     #[test]
     fn api_59_empty_routes_body() {
         let d = tmp(); let f = d.path().join("api.rs");
@@ -981,11 +1031,11 @@ mod tests {
         fs::write(&f, c).unwrap(); inject_api(&f);
         assert!(fs::read_to_string(&f).unwrap().contains("/api/auth/login"));
     }
-    // 60. realistic api.rs (like demo) → all auth routes injected, all existing preserved
+    // 60. realistic api.rs (like demo) ↁEall auth routes injected, all existing preserved
     #[test]
     fn api_60_realistic_api_rs() {
         let d = tmp(); let f = d.path().join("api.rs");
-        let c = "use axum::{routing::{get, post}, Router};\nuse std::sync::Arc;\nuse my_app::AppState;\nuse crate::app::Http::Controllers::{UserController, StatusController};\n\npub fn routes() -> Router<Arc<AppState>> {\n    Router::new()\n        .route(\"/api/users\", get(UserController::index).post(UserController::store))\n        .route(\"/api/status\", get(StatusController::index))\n        .route(\"/api/users/mock\", get(UserController::mock))\n}\n";
+        let c = "use axum::{routing::{get, post}, Router};\nuse std::sync::Arc;\nuse my_app::AppState;\nuse crate::app::http::controllers::{user_controller, status_controller};\n\npub fn routes() -> Router<Arc<AppState>> {\n    Router::new()\n        .route(\"/api/users\", get(user_controller::index).post(user_controller::store))\n        .route(\"/api/status\", get(status_controller::index))\n        .route(\"/api/users/mock\", get(user_controller::mock))\n}\n";
         fs::write(&f, c).unwrap(); inject_api(&f);
         let c = fs::read_to_string(&f).unwrap();
         for r in &["/api/users", "/api/status", "/api/auth/login", "/api/auth/refresh", "/api/auth/logout", "/api/auth/register"] {
@@ -993,7 +1043,7 @@ mod tests {
         }
     }
 
-    // ── inject_auth_into_routes — web (25) ────────────────────────────────────
+    // ── inject_auth_into_routes  Eweb (25) ────────────────────────────────────
 
     // 61. /login GET injected
     #[test]
@@ -1001,14 +1051,14 @@ mod tests {
         let d = tmp(); let f = d.path().join("web.rs");
         fs::write(&f, web_content()).unwrap(); inject_web(&f);
         let c = fs::read_to_string(&f).unwrap();
-        assert!(c.contains("\"/login\"") && c.contains("get(LoginController::show)"));
+        assert!(c.contains("\"/login\"") && c.contains("get(login_controller::show)"));
     }
     // 62. /login POST injected
     #[test]
     fn web_62_login_post_injected() {
         let d = tmp(); let f = d.path().join("web.rs");
         fs::write(&f, web_content()).unwrap(); inject_web(&f);
-        assert!(fs::read_to_string(&f).unwrap().contains("post(LoginController::store)"));
+        assert!(fs::read_to_string(&f).unwrap().contains("post(login_controller::store)"));
     }
     // 63. /logout injected
     #[test]
@@ -1023,30 +1073,30 @@ mod tests {
         let d = tmp(); let f = d.path().join("web.rs");
         fs::write(&f, web_content()).unwrap(); inject_web(&f);
         let c = fs::read_to_string(&f).unwrap();
-        assert!(c.contains("\"/register\"") && c.contains("get(RegisterController::show)"));
+        assert!(c.contains("\"/register\"") && c.contains("get(register_controller::show)"));
     }
     // 65. /register POST injected
     #[test]
     fn web_65_register_post_injected() {
         let d = tmp(); let f = d.path().join("web.rs");
         fs::write(&f, web_content()).unwrap(); inject_web(&f);
-        assert!(fs::read_to_string(&f).unwrap().contains("post(RegisterController::store)"));
+        assert!(fs::read_to_string(&f).unwrap().contains("post(register_controller::store)"));
     }
     // 66. use_decl contains LoginController
     #[test]
     fn web_66_use_decl_has_login_controller() {
         let d = tmp(); let f = d.path().join("web.rs");
         fs::write(&f, web_content()).unwrap(); inject_web(&f);
-        assert!(fs::read_to_string(&f).unwrap().contains("LoginController"));
+        assert!(fs::read_to_string(&f).unwrap().contains("login_controller"));
     }
     // 67. use_decl contains RegisterController
     #[test]
     fn web_67_use_decl_has_register_controller() {
         let d = tmp(); let f = d.path().join("web.rs");
         fs::write(&f, web_content()).unwrap(); inject_web(&f);
-        assert!(fs::read_to_string(&f).unwrap().contains("RegisterController"));
+        assert!(fs::read_to_string(&f).unwrap().contains("register_controller"));
     }
-    // 68. routing::get, → routing::{get, post},
+    // 68. routing::get, ↁErouting::{get, post},
     #[test]
     fn web_68_routing_replaced() {
         let d = tmp(); let f = d.path().join("web.rs");
@@ -1066,7 +1116,7 @@ mod tests {
         let d = tmp(); let f = d.path().join("web.rs");
         fs::write(&f, web_content()).unwrap(); inject_web(&f);
         let c = fs::read_to_string(&f).unwrap();
-        assert!(c.find("LoginController").unwrap() < c.find("pub fn routes").unwrap());
+        assert!(c.find("login_controller").unwrap() < c.find("pub fn routes").unwrap());
     }
     // 71. idempotent: /login once after two calls
     #[test]
@@ -1094,7 +1144,7 @@ mod tests {
     fn web_74_idempotent_use_decl() {
         let d = tmp(); let f = d.path().join("web.rs");
         fs::write(&f, web_content()).unwrap(); inject_web(&f); inject_web(&f);
-        assert_eq!(fs::read_to_string(&f).unwrap().matches("LoginController, RegisterController").count(), 1);
+        assert_eq!(fs::read_to_string(&f).unwrap().matches("login_controller, register_controller").count(), 1);
     }
     // 75. no #[path] in result
     #[test]
@@ -1103,13 +1153,13 @@ mod tests {
         fs::write(&f, web_content()).unwrap(); inject_web(&f);
         assert!(!fs::read_to_string(&f).unwrap().contains("#[path"));
     }
-    // 76. missing file → Ok
+    // 76. missing file ↁEOk
     #[test]
     fn web_76_missing_file_ok() {
         let d = tmp(); let f = d.path().join("web.rs");
         assert!(inject_auth_into_routes(f.to_str().unwrap(), web_use(), web_routes()).is_ok());
     }
-    // 77. no pub fn routes → Err
+    // 77. no pub fn routes ↁEErr
     #[test]
     fn web_77_no_pub_fn_routes_err() {
         let d = tmp(); let f = d.path().join("web.rs");
@@ -1124,14 +1174,14 @@ mod tests {
         let c = fs::read_to_string(&f).unwrap();
         assert!(!c.contains("/api/auth/login") && !c.contains("/api/auth/refresh"));
     }
-    // 79. LoginController::destroy present for logout
+    // 79. login_controller::destroy present for logout
     #[test]
     fn web_79_logout_uses_destroy() {
         let d = tmp(); let f = d.path().join("web.rs");
         fs::write(&f, web_content()).unwrap(); inject_web(&f);
-        assert!(fs::read_to_string(&f).unwrap().contains("LoginController::destroy"));
+        assert!(fs::read_to_string(&f).unwrap().contains("login_controller::destroy"));
     }
-    // 80. five calls → /login exactly once
+    // 80. five calls ↁE/login exactly once
     #[test]
     fn web_80_five_calls_login_once() {
         let d = tmp(); let f = d.path().join("web.rs");
@@ -1144,7 +1194,7 @@ mod tests {
     fn web_81_uses_crate_path() {
         let d = tmp(); let f = d.path().join("web.rs");
         fs::write(&f, web_content()).unwrap(); inject_web(&f);
-        assert!(fs::read_to_string(&f).unwrap().contains("use crate::app::Http::Controllers::Auth::"));
+        assert!(fs::read_to_string(&f).unwrap().contains("use crate::app::http::controllers::auth::"));
     }
     // 82. pub fn routes preserved
     #[test]
@@ -1153,11 +1203,11 @@ mod tests {
         fs::write(&f, web_content()).unwrap(); inject_web(&f);
         assert!(fs::read_to_string(&f).unwrap().contains("pub fn routes"));
     }
-    // 83. already has Controllers::Auth:: → skip, Ok
+    // 83. already has controllers::auth:: ↁEskip, Ok
     #[test]
     fn web_83_skip_when_marker_present() {
         let d = tmp(); let f = d.path().join("web.rs");
-        let c = format!("{}\n// Controllers::Auth:: here", web_content());
+        let c = format!("{}\n// controllers::auth:: here", web_content());
         fs::write(&f, &c).unwrap();
         assert!(inject_auth_into_routes(f.to_str().unwrap(), web_use(), web_routes()).is_ok());
         assert!(!fs::read_to_string(&f).unwrap().contains("\"/login\""));
@@ -1178,7 +1228,7 @@ mod tests {
     fn web_85_login_get_post_chained() {
         let d = tmp(); let f = d.path().join("web.rs");
         fs::write(&f, web_content()).unwrap(); inject_web(&f);
-        assert!(fs::read_to_string(&f).unwrap().contains("get(LoginController::show).post(LoginController::store)"));
+        assert!(fs::read_to_string(&f).unwrap().contains("get(login_controller::show).post(login_controller::store)"));
     }
     // 86. /dashboard GET injected
     #[test]
@@ -1186,14 +1236,14 @@ mod tests {
         let d = tmp(); let f = d.path().join("web.rs");
         fs::write(&f, web_content()).unwrap(); inject_web(&f);
         let c = fs::read_to_string(&f).unwrap();
-        assert!(c.contains("\"/dashboard\"") && c.contains("get(DashboardController::index)"));
+        assert!(c.contains("\"/dashboard\"") && c.contains("get(dashboard_controller::index)"));
     }
     // 87. DashboardController present in use_decl after web inject
     #[test]
     fn web_87_dashboard_controller_in_use_decl() {
         let d = tmp(); let f = d.path().join("web.rs");
         fs::write(&f, web_content()).unwrap(); inject_web(&f);
-        assert!(fs::read_to_string(&f).unwrap().contains("DashboardController"));
+        assert!(fs::read_to_string(&f).unwrap().contains("dashboard_controller"));
     }
 
     // ── combined / edge cases (15) ─────────────────────────────────────────────
@@ -1206,7 +1256,7 @@ mod tests {
         fs::write(&mod_f, "").unwrap(); fs::write(&routes_f, api_content()).unwrap();
         inject_mod_decl(mod_f.to_str().unwrap(), "Auth").unwrap();
         inject_api(&routes_f);
-        assert!(fs::read_to_string(&mod_f).unwrap().contains("pub mod Auth;"));
+        assert!(fs::read_to_string(&mod_f).unwrap().contains("pub mod auth;"));
         assert!(fs::read_to_string(&routes_f).unwrap().contains("/api/auth/login"));
     }
     // 87. API injection does not modify web.rs
@@ -1242,12 +1292,12 @@ mod tests {
     fn cmb_90_three_mod_decls_each_once() {
         let d = tmp(); let f = d.path().join("mod.rs");
         fs::write(&f, "").unwrap();
-        for m in &["Auth", "login_request", "register_request"] {
+        for m in &["auth", "login_request", "register_request"] {
             inject_mod_decl(f.to_str().unwrap(), m).unwrap();
         }
         let c = fs::read_to_string(&f).unwrap();
-        for m in &["Auth", "login_request", "register_request"] {
-            assert_eq!(c.matches(&format!("pub mod {};", m)).count(), 1, "{} must appear once", m);
+        for m in &["auth", "login_request", "register_request"] {
+            assert_eq!(c.matches(&format!("pub mod {};", to_snake_case(m))).count(), 1, "{} must appear once", m);
         }
     }
     // 91. all four API routes present after single inject_api call
@@ -1275,7 +1325,7 @@ mod tests {
     fn cmb_93_register_get_post_chained() {
         let d = tmp(); let f = d.path().join("web.rs");
         fs::write(&f, web_content()).unwrap(); inject_web(&f);
-        assert!(fs::read_to_string(&f).unwrap().contains("get(RegisterController::show).post(RegisterController::store)"));
+        assert!(fs::read_to_string(&f).unwrap().contains("get(register_controller::show).post(register_controller::store)"));
     }
     // 94. rfind finds last closing brace (inline closure in route)
     #[test]
@@ -1287,20 +1337,20 @@ mod tests {
         assert!(c.contains("/api/auth/login"));
         assert!(c.trim_end().ends_with('}'));
     }
-    // 95. inject Auth mod twice → still once
+    // 95. inject Auth mod twice ↁEstill once
     #[test]
     fn cmb_95_inject_auth_mod_twice_once() {
         let d = tmp(); let f = d.path().join("mod.rs");
-        fs::write(&f, "pub mod UserController;\n").unwrap();
+        fs::write(&f, "pub mod user_controller;\n").unwrap();
         inject_mod_decl(f.to_str().unwrap(), "Auth").unwrap();
         inject_mod_decl(f.to_str().unwrap(), "Auth").unwrap();
-        assert_eq!(fs::read_to_string(&f).unwrap().matches("pub mod Auth;").count(), 1);
+        assert_eq!(fs::read_to_string(&f).unwrap().matches("pub mod auth;").count(), 1);
     }
     // 96. realistic web.rs: existing routes preserved, auth injected, routing replaced
     #[test]
     fn cmb_96_realistic_web_rs() {
         let d = tmp(); let f = d.path().join("web.rs");
-        let c = "use axum::{routing::get, Router};\nuse std::sync::Arc;\nuse my_app::AppState;\nuse crate::app::Http::Controllers::HomeController;\n\npub fn routes() -> Router<Arc<AppState>> {\n    Router::new()\n        .route(\"/\", get(HomeController::index))\n        .route(\"/dashboard\", get(HomeController::dashboard))\n}\n";
+        let c = "use axum::{routing::get, Router};\nuse std::sync::Arc;\nuse my_app::AppState;\nuse crate::app::http::controllers::home_controller;\n\npub fn routes() -> Router<Arc<AppState>> {\n    Router::new()\n        .route(\"/\", get(home_controller::index))\n        .route(\"/dashboard\", get(home_controller::dashboard))\n}\n";
         fs::write(&f, c).unwrap(); inject_web(&f);
         let c = fs::read_to_string(&f).unwrap();
         for r in &["\"/\"", "\"/dashboard\"", "\"/login\"", "\"/logout\"", "\"/register\""] {
@@ -1327,14 +1377,14 @@ mod tests {
     fn cmb_99_web_mod_and_routes_combined() {
         let d = tmp();
         let mod_f = d.path().join("mod.rs"); let web_f = d.path().join("web.rs");
-        fs::write(&mod_f, "pub mod HomeController;\n").unwrap();
+        fs::write(&mod_f, "pub mod home_controller;\n").unwrap();
         fs::write(&web_f, web_content()).unwrap();
         inject_mod_decl(mod_f.to_str().unwrap(), "Auth").unwrap();
         inject_web(&web_f);
-        assert!(fs::read_to_string(&mod_f).unwrap().contains("pub mod Auth;"));
+        assert!(fs::read_to_string(&mod_f).unwrap().contains("pub mod auth;"));
         assert!(fs::read_to_string(&web_f).unwrap().contains("\"/login\""));
     }
-    // 100. full round-trip: fresh files → inject API → inject again → each element exactly once
+    // 100. full round-trip: fresh files ↁEinject API ↁEinject again ↁEeach element exactly once
     #[test]
     fn cmb_100_full_round_trip_api_idempotent() {
         let d = tmp(); let f = d.path().join("api.rs");
@@ -1348,7 +1398,7 @@ mod tests {
         assert_eq!(c.matches("routing::{get, post}").count(), 1, "routing import must appear exactly once");
     }
 
-    // ── controller_content — 10 tests ─────────────────────────────────────────
+    // ── controller_content  E10 tests ─────────────────────────────────────────
 
     #[test]
     fn ctrl_01_all_five_messages_contain_name() {
@@ -1392,7 +1442,6 @@ mod tests {
     #[test]
     fn ctrl_05_all_five_messages_are_distinct() {
         // Regression: if name substitution is broken all messages might be identical
-        let out = controller_content("Foo");
         let messages: Vec<_> = ["index", "show", "store", "update", "destroy"]
             .iter()
             .map(|a| format!("\"Foo {}\"", a))
@@ -1432,7 +1481,7 @@ mod tests {
         assert_ne!(controller_content("FooController"), controller_content("BarController"));
     }
 
-    // ── request_content — 10 tests ────────────────────────────────────────────
+    // ── request_content  E10 tests ────────────────────────────────────────────
 
     #[test]
     fn req_01_has_pub_struct_with_name() {
@@ -1485,7 +1534,7 @@ mod tests {
         assert_ne!(request_content("LoginRequest"), request_content("RegisterRequest"));
     }
 
-    // ── model_content — 10 tests ──────────────────────────────────────────────
+    // ── model_content  E10 tests ──────────────────────────────────────────────
 
     #[test]
     fn mdl_01_has_pub_struct_with_name() {
@@ -1538,7 +1587,7 @@ mod tests {
         assert_ne!(model_content("User"), model_content("Post"));
     }
 
-    // ── view_template_content — 10 tests ──────────────────────────────────────
+    // ── view_template_content  E10 tests ──────────────────────────────────────
 
     #[test]
     fn view_tpl_01_extends_layouts_app() {
@@ -1595,7 +1644,7 @@ mod tests {
         assert!(!out.chars().any(|c| ('\u{3040}'..='\u{9FFF}').contains(&c)));
     }
 
-    // ── migration content — 10 tests ──────────────────────────────────────────
+    // ── migration content  E10 tests ──────────────────────────────────────────
 
     #[test]
     fn mig_01_up_contains_migration_comment_with_name() {
@@ -1673,19 +1722,19 @@ mod tests {
         inject_mod_decl(f.to_str().unwrap(), "UserController").unwrap();
         inject_mod_decl(f.to_str().unwrap(), "PostController").unwrap();
         let c = fs::read_to_string(&f).unwrap();
-        assert!(c.contains("pub mod UserController;") && c.contains("pub mod PostController;"));
+        assert!(c.contains("pub mod user_controller;") && c.contains("pub mod post_controller;"));
     }
 
     #[test]
     fn cmb2_02_three_controllers_all_in_mod() {
         let d = tmp(); let f = d.path().join("mod.rs");
         fs::write(&f, "").unwrap();
-        for ctrl in &["HomeController", "UserController", "StatusController"] {
+        for ctrl in &["home_controller", "user_controller", "status_controller"] {
             inject_mod_decl(f.to_str().unwrap(), ctrl).unwrap();
         }
         let c = fs::read_to_string(&f).unwrap();
-        for ctrl in &["HomeController", "UserController", "StatusController"] {
-            assert!(c.contains(&format!("pub mod {};", ctrl)), "missing {}", ctrl);
+        for ctrl in &["home_controller", "user_controller", "status_controller"] {
+            assert!(c.contains(&format!("pub mod {};", to_snake_case(ctrl))), "missing {}", ctrl);
         }
     }
 
@@ -1698,31 +1747,31 @@ mod tests {
         }
         let c = fs::read_to_string(&f).unwrap();
         for ctrl in &["A", "B", "C", "D", "E"] {
-            assert_eq!(c.matches(&format!("pub mod {};", ctrl)).count(), 1, "{} must appear once", ctrl);
+            assert_eq!(c.matches(&format!("pub mod {};", to_snake_case(ctrl))).count(), 1, "{} must appear once", ctrl);
         }
     }
 
     #[test]
     fn cmb2_04_controller_then_auth_inject_both_in_mod() {
         let d = tmp(); let f = d.path().join("mod.rs");
-        fs::write(&f, "pub mod HomeController;\n").unwrap();
+        fs::write(&f, "pub mod home_controller;\n").unwrap();
         inject_mod_decl(f.to_str().unwrap(), "UserController").unwrap();
         inject_mod_decl(f.to_str().unwrap(), "Auth").unwrap();
         let c = fs::read_to_string(&f).unwrap();
-        assert!(c.contains("pub mod HomeController;"));
-        assert!(c.contains("pub mod UserController;"));
-        assert!(c.contains("pub mod Auth;"));
+        assert!(c.contains("pub mod home_controller;"));
+        assert!(c.contains("pub mod user_controller;"));
+        assert!(c.contains("pub mod auth;"));
     }
 
     #[test]
     fn cmb2_05_controller_then_dashboard_all_three_once() {
         let d = tmp(); let f = d.path().join("mod.rs");
-        fs::write(&f, "pub mod UserController;\n").unwrap();
+        fs::write(&f, "pub mod user_controller;\n").unwrap();
         inject_mod_decl(f.to_str().unwrap(), "Auth").unwrap();
         inject_mod_decl(f.to_str().unwrap(), "DashboardController").unwrap();
         let c = fs::read_to_string(&f).unwrap();
-        for m in &["UserController", "Auth", "DashboardController"] {
-            assert_eq!(c.matches(&format!("pub mod {};", m)).count(), 1, "{} must appear once", m);
+        for m in &["user_controller", "auth", "dashboard_controller"] {
+            assert_eq!(c.matches(&format!("pub mod {};", to_snake_case(m))).count(), 1, "{} must appear once", m);
         }
     }
 
@@ -1741,12 +1790,12 @@ mod tests {
     #[test]
     fn cmb2_07_store_user_request_plus_auth_requests_all_three() {
         let d = tmp(); let f = d.path().join("mod.rs");
-        fs::write(&f, "pub mod StoreUserRequest;\n").unwrap();
+        fs::write(&f, "pub mod store_user_request;\n").unwrap();
         inject_mod_decl(f.to_str().unwrap(), "login_request").unwrap();
         inject_mod_decl(f.to_str().unwrap(), "register_request").unwrap();
         let c = fs::read_to_string(&f).unwrap();
-        for m in &["StoreUserRequest", "login_request", "register_request"] {
-            assert_eq!(c.matches(&format!("pub mod {};", m)).count(), 1, "{} must appear once", m);
+        for m in &["store_user_request", "login_request", "register_request"] {
+            assert_eq!(c.matches(&format!("pub mod {};", to_snake_case(m))).count(), 1, "{} must appear once", m);
         }
     }
 
@@ -1769,10 +1818,10 @@ mod tests {
         let ctrl_mod = d.path().join("controllers_mod.rs");
         let req_mod  = d.path().join("requests_mod.rs");
         fs::write(&ctrl_mod, "").unwrap();
-        fs::write(&req_mod, "pub mod StoreUserRequest;\n").unwrap();
+        fs::write(&req_mod, "pub mod store_user_request;\n").unwrap();
         inject_mod_decl(ctrl_mod.to_str().unwrap(), "UserController").unwrap();
         // requests mod.rs must be unchanged
-        assert_eq!(fs::read_to_string(&req_mod).unwrap(), "pub mod StoreUserRequest;\n");
+        assert_eq!(fs::read_to_string(&req_mod).unwrap(), "pub mod store_user_request;\n");
     }
 
     #[test]
@@ -1780,10 +1829,10 @@ mod tests {
         let d = tmp();
         let ctrl_mod = d.path().join("controllers_mod.rs");
         let req_mod  = d.path().join("requests_mod.rs");
-        fs::write(&ctrl_mod, "pub mod UserController;\n").unwrap();
+        fs::write(&ctrl_mod, "pub mod user_controller;\n").unwrap();
         fs::write(&req_mod, "").unwrap();
         inject_mod_decl(req_mod.to_str().unwrap(), "login_request").unwrap();
-        assert_eq!(fs::read_to_string(&ctrl_mod).unwrap(), "pub mod UserController;\n");
+        assert_eq!(fs::read_to_string(&ctrl_mod).unwrap(), "pub mod user_controller;\n");
     }
 
     // --- Group 3: Models and middleware in their own mod.rs (5) ---
@@ -1795,19 +1844,19 @@ mod tests {
         inject_mod_decl(f.to_str().unwrap(), "User").unwrap();
         inject_mod_decl(f.to_str().unwrap(), "Post").unwrap();
         let c = fs::read_to_string(&f).unwrap();
-        assert!(c.contains("pub mod User;") && c.contains("pub mod Post;"));
+        assert!(c.contains("pub mod user;") && c.contains("pub mod post;"));
     }
 
     #[test]
     fn cmb2_12_user_post_comment_all_in_models_mod() {
         let d = tmp(); let f = d.path().join("mod.rs");
         fs::write(&f, "").unwrap();
-        for m in &["User", "Post", "Comment"] {
+        for m in &["user", "post", "comment"] {
             inject_mod_decl(f.to_str().unwrap(), m).unwrap();
         }
         let c = fs::read_to_string(&f).unwrap();
-        for m in &["User", "Post", "Comment"] {
-            assert_eq!(c.matches(&format!("pub mod {};", m)).count(), 1);
+        for m in &["user", "post", "comment"] {
+            assert_eq!(c.matches(&format!("pub mod {};", to_snake_case(m))).count(), 1);
         }
     }
 
@@ -1815,12 +1864,12 @@ mod tests {
     fn cmb2_13_three_middlewares_all_in_mod() {
         let d = tmp(); let f = d.path().join("mod.rs");
         fs::write(&f, "").unwrap();
-        for mw in &["LogRequest", "Authenticate", "RateLimit"] {
+        for mw in &["log_request", "authenticate", "rate_limit"] {
             inject_mod_decl(f.to_str().unwrap(), mw).unwrap();
         }
         let c = fs::read_to_string(&f).unwrap();
-        for mw in &["LogRequest", "Authenticate", "RateLimit"] {
-            assert_eq!(c.matches(&format!("pub mod {};", mw)).count(), 1);
+        for mw in &["log_request", "authenticate", "rate_limit"] {
+            assert_eq!(c.matches(&format!("pub mod {};", to_snake_case(mw))).count(), 1);
         }
     }
 
@@ -1833,10 +1882,10 @@ mod tests {
         fs::write(&model_mod, "").unwrap();
         inject_mod_decl(ctrl_mod.to_str().unwrap(), "UserController").unwrap();
         inject_mod_decl(model_mod.to_str().unwrap(), "User").unwrap();
-        assert!(fs::read_to_string(&ctrl_mod).unwrap().contains("pub mod UserController;"));
-        assert!(fs::read_to_string(&model_mod).unwrap().contains("pub mod User;"));
-        assert!(!fs::read_to_string(&ctrl_mod).unwrap().contains("pub mod User;"));
-        assert!(!fs::read_to_string(&model_mod).unwrap().contains("pub mod UserController;"));
+        assert!(fs::read_to_string(&ctrl_mod).unwrap().contains("pub mod user_controller;"));
+        assert!(fs::read_to_string(&model_mod).unwrap().contains("pub mod user;"));
+        assert!(!fs::read_to_string(&ctrl_mod).unwrap().contains("pub mod user;"));
+        assert!(!fs::read_to_string(&model_mod).unwrap().contains("pub mod user_controller;"));
     }
 
     #[test]
@@ -1857,12 +1906,12 @@ mod tests {
         let api_f = d.path().join("api.rs");
         let mod_f = d.path().join("mod.rs");
         fs::write(&api_f, api_content()).unwrap();
-        fs::write(&mod_f, "pub mod UserController;\n").unwrap();
+        fs::write(&mod_f, "pub mod user_controller;\n").unwrap();
         inject_api(&api_f);
         inject_mod_decl(mod_f.to_str().unwrap(), "Auth").unwrap();
         assert!(fs::read_to_string(&api_f).unwrap().contains("/api/auth/login"));
         let mc = fs::read_to_string(&mod_f).unwrap();
-        assert!(mc.contains("pub mod UserController;") && mc.contains("pub mod Auth;"));
+        assert!(mc.contains("pub mod user_controller;") && mc.contains("pub mod auth;"));
     }
 
     #[test]
@@ -1871,14 +1920,14 @@ mod tests {
         let web_f = d.path().join("web.rs");
         let req_f = d.path().join("mod.rs");
         fs::write(&web_f, web_content()).unwrap();
-        fs::write(&req_f, "pub mod StoreUserRequest;\n").unwrap();
+        fs::write(&req_f, "pub mod store_user_request;\n").unwrap();
         inject_web(&web_f);
         inject_mod_decl(req_f.to_str().unwrap(), "login_request").unwrap();
         inject_mod_decl(req_f.to_str().unwrap(), "register_request").unwrap();
         assert!(fs::read_to_string(&web_f).unwrap().contains("\"/login\""));
         let rc = fs::read_to_string(&req_f).unwrap();
-        for m in &["StoreUserRequest", "login_request", "register_request"] {
-            assert_eq!(rc.matches(&format!("pub mod {};", m)).count(), 1);
+        for m in &["store_user_request", "login_request", "register_request"] {
+            assert_eq!(rc.matches(&format!("pub mod {};", to_snake_case(m))).count(), 1);
         }
     }
 
@@ -1934,7 +1983,7 @@ mod tests {
         let d = tmp(); let f = d.path().join("api.rs");
         fs::write(&f, api_content()).unwrap();
         inject_api(&f);
-        assert!(fs::read_to_string(&f).unwrap().contains("get(ApiLoginController::me)"));
+        assert!(fs::read_to_string(&f).unwrap().contains("get(api_login_controller::me)"));
     }
 
     #[test]
@@ -2101,7 +2150,7 @@ mod tests {
         let d = tmp();
         let ctrl_mod = d.path().join("mod.rs");
         let web_f    = d.path().join("web.rs");
-        fs::write(&ctrl_mod, "pub mod HomeController;\npub mod UserController;\n").unwrap();
+        fs::write(&ctrl_mod, "pub mod home_controller;\npub mod user_controller;\n").unwrap();
         fs::write(&web_f, web_content()).unwrap();
         // simulate make:controller PostController
         inject_mod_decl(ctrl_mod.to_str().unwrap(), "PostController").unwrap();
@@ -2110,8 +2159,8 @@ mod tests {
         inject_mod_decl(ctrl_mod.to_str().unwrap(), "DashboardController").unwrap();
         inject_web(&web_f);
         let mc = fs::read_to_string(&ctrl_mod).unwrap();
-        for m in &["HomeController", "UserController", "PostController", "Auth", "DashboardController"] {
-            assert_eq!(mc.matches(&format!("pub mod {};", m)).count(), 1, "{} must appear once", m);
+        for m in &["home_controller", "user_controller", "post_controller", "auth", "dashboard_controller"] {
+            assert_eq!(mc.matches(&format!("pub mod {};", to_snake_case(m))).count(), 1, "{} must appear once", m);
         }
         let wc = fs::read_to_string(&web_f).unwrap();
         for r in &["\"/login\"", "\"/logout\"", "\"/register\"", "\"/dashboard\""] {
@@ -2122,13 +2171,13 @@ mod tests {
     #[test]
     fn cmb2_47_realistic_make_request_and_make_auth() {
         let d = tmp(); let f = d.path().join("mod.rs");
-        fs::write(&f, "pub mod StoreUserRequest;\n").unwrap();
+        fs::write(&f, "pub mod store_user_request;\n").unwrap();
         // simulate make:auth injecting login_request and register_request
         inject_mod_decl(f.to_str().unwrap(), "login_request").unwrap();
         inject_mod_decl(f.to_str().unwrap(), "register_request").unwrap();
         let c = fs::read_to_string(&f).unwrap();
-        for m in &["StoreUserRequest", "login_request", "register_request"] {
-            assert_eq!(c.matches(&format!("pub mod {};", m)).count(), 1, "{} must appear once", m);
+        for m in &["store_user_request", "login_request", "register_request"] {
+            assert_eq!(c.matches(&format!("pub mod {};", to_snake_case(m))).count(), 1, "{} must appear once", m);
         }
     }
 
@@ -2138,21 +2187,21 @@ mod tests {
         let d = tmp();
         // Order A: auth first, then controller
         let f_a = d.path().join("mod_a.rs");
-        fs::write(&f_a, "pub mod HomeController;\n").unwrap();
+        fs::write(&f_a, "pub mod home_controller;\n").unwrap();
         inject_mod_decl(f_a.to_str().unwrap(), "Auth").unwrap();
         inject_mod_decl(f_a.to_str().unwrap(), "DashboardController").unwrap();
         inject_mod_decl(f_a.to_str().unwrap(), "PostController").unwrap();
         // Order B: controller first, then auth
         let f_b = d.path().join("mod_b.rs");
-        fs::write(&f_b, "pub mod HomeController;\n").unwrap();
+        fs::write(&f_b, "pub mod home_controller;\n").unwrap();
         inject_mod_decl(f_b.to_str().unwrap(), "PostController").unwrap();
         inject_mod_decl(f_b.to_str().unwrap(), "Auth").unwrap();
         inject_mod_decl(f_b.to_str().unwrap(), "DashboardController").unwrap();
         // Both must contain all four modules
         for f in &[f_a, f_b] {
             let c = fs::read_to_string(f).unwrap();
-            for m in &["HomeController", "Auth", "DashboardController", "PostController"] {
-                assert_eq!(c.matches(&format!("pub mod {};", m)).count(), 1, "{}: {} must appear once", f.display(), m);
+            for m in &["home_controller", "auth", "dashboard_controller", "post_controller"] {
+                assert_eq!(c.matches(&format!("pub mod {};", to_snake_case(m))).count(), 1, "{}: {} must appear once", f.display(), m);
             }
         }
     }
@@ -2181,9 +2230,9 @@ mod tests {
         let mdl_mod  = d.path().join("mdl_mod.rs");
         let api_f    = d.path().join("api.rs");
         let web_f    = d.path().join("web.rs");
-        fs::write(&ctrl_mod, "pub mod HomeController;\n").unwrap();
-        fs::write(&req_mod,  "pub mod StoreUserRequest;\n").unwrap();
-        fs::write(&mdl_mod,  "pub mod User;\n").unwrap();
+        fs::write(&ctrl_mod, "pub mod home_controller;\n").unwrap();
+        fs::write(&req_mod,  "pub mod store_user_request;\n").unwrap();
+        fs::write(&mdl_mod,  "pub mod user;\n").unwrap();
         fs::write(&api_f, api_content()).unwrap();
         fs::write(&web_f, web_content()).unwrap();
         // make:controller PostController
@@ -2201,18 +2250,18 @@ mod tests {
         inject_web(&web_f);
         // Verify ctrl_mod: HomeController, PostController, Auth
         let cc = fs::read_to_string(&ctrl_mod).unwrap();
-        for m in &["HomeController", "PostController", "Auth"] {
-            assert_eq!(cc.matches(&format!("pub mod {};", m)).count(), 1, "ctrl: {} once", m);
+        for m in &["home_controller", "post_controller", "auth"] {
+            assert_eq!(cc.matches(&format!("pub mod {};", to_snake_case(m))).count(), 1, "ctrl: {} once", m);
         }
         // Verify req_mod: StoreUserRequest, CreatePostRequest, login_request, register_request
         let rc = fs::read_to_string(&req_mod).unwrap();
-        for m in &["StoreUserRequest", "CreatePostRequest", "login_request", "register_request"] {
-            assert_eq!(rc.matches(&format!("pub mod {};", m)).count(), 1, "req: {} once", m);
+        for m in &["store_user_request", "create_post_request", "login_request", "register_request"] {
+            assert_eq!(rc.matches(&format!("pub mod {};", to_snake_case(m))).count(), 1, "req: {} once", m);
         }
         // Verify mdl_mod: User, Post
         let mc = fs::read_to_string(&mdl_mod).unwrap();
-        for m in &["User", "Post"] {
-            assert_eq!(mc.matches(&format!("pub mod {};", m)).count(), 1, "mdl: {} once", m);
+        for m in &["user", "post"] {
+            assert_eq!(mc.matches(&format!("pub mod {};", to_snake_case(m))).count(), 1, "mdl: {} once", m);
         }
         // Verify api.rs has all API auth routes
         let ac = fs::read_to_string(&api_f).unwrap();
@@ -2271,15 +2320,15 @@ mod tests {
         with_app(|| {
             controller("ArticleController")?;
 
-            assert!(file_exists("src/app/Http/Controllers/ArticleController.rs"),
+            assert!(file_exists("src/app/http/controllers/article_controller.rs"),
                 "controller file not created");
-            let c = read_file("src/app/Http/Controllers/ArticleController.rs");
+            let c = read_file("src/app/http/controllers/article_controller.rs");
             for action in &["index", "show", "store", "update", "destroy"] {
                 assert!(c.contains(&format!("\"ArticleController {}\"", action)),
                     "message missing for {}", action);
             }
-            assert!(read_file("src/app/Http/Controllers/mod.rs")
-                .contains("pub mod ArticleController;"),
+            assert!(read_file("src/app/http/controllers/mod.rs")
+                .contains("pub mod article_controller;"),
                 "ArticleController not in mod.rs");
             Ok(())
         });
@@ -2290,13 +2339,13 @@ mod tests {
         with_app(|| {
             request("CreateArticleRequest")?;
 
-            assert!(file_exists("src/app/Http/Requests/CreateArticleRequest.rs"));
-            let c = read_file("src/app/Http/Requests/CreateArticleRequest.rs");
+            assert!(file_exists("src/app/http/requests/create_article_request.rs"));
+            let c = read_file("src/app/http/requests/create_article_request.rs");
             assert!(c.contains("pub struct CreateArticleRequest"));
             assert!(c.contains("Validate"));
             assert!(!c.contains("Serialize"), "request must not derive Serialize");
-            assert!(read_file("src/app/Http/Requests/mod.rs")
-                .contains("pub mod CreateArticleRequest;"));
+            assert!(read_file("src/app/http/requests/mod.rs")
+                .contains("pub mod create_article_request;"));
             Ok(())
         });
     }
@@ -2306,12 +2355,12 @@ mod tests {
         with_app(|| {
             model("Article")?;
 
-            assert!(file_exists("src/app/Models/Article.rs"));
-            let c = read_file("src/app/Models/Article.rs");
+            assert!(file_exists("src/app/models/article.rs"));
+            let c = read_file("src/app/models/article.rs");
             assert!(c.contains("pub struct Article"));
             assert!(c.contains("impl Article"));
             assert!(c.contains("pub id: i64,"), "model id must be i64");
-            assert!(read_file("src/app/Models/mod.rs").contains("pub mod Article;"));
+            assert!(read_file("src/app/models/mod.rs").contains("pub mod article;"));
             Ok(())
         });
     }
@@ -2334,9 +2383,9 @@ mod tests {
         with_app(|| {
             middleware("EnsureAdmin")?;
 
-            assert!(file_exists("src/app/Http/Middleware/EnsureAdmin.rs"));
-            assert!(read_file("src/app/Http/Middleware/mod.rs")
-                .contains("pub mod EnsureAdmin;"));
+            assert!(file_exists("src/app/http/middleware/ensure_admin.rs"));
+            assert!(read_file("src/app/http/middleware/mod.rs")
+                .contains("pub mod ensure_admin;"));
             Ok(())
         });
     }
@@ -2365,19 +2414,19 @@ mod tests {
             auth(false)?;
 
             // Controllers
-            assert!(file_exists("src/app/Http/Controllers/Auth/LoginController.rs"));
-            assert!(file_exists("src/app/Http/Controllers/Auth/RegisterController.rs"));
-            assert!(file_exists("src/app/Http/Controllers/DashboardController.rs"));
+            assert!(file_exists("src/app/http/controllers/auth/login_controller.rs"));
+            assert!(file_exists("src/app/http/controllers/auth/register_controller.rs"));
+            assert!(file_exists("src/app/http/controllers/dashboard_controller.rs"));
             // Views
             assert!(file_exists("src/resources/views/auth/login.jinja.html"));
             assert!(file_exists("src/resources/views/auth/register.jinja.html"));
             assert!(file_exists("src/resources/views/dashboard.jinja.html"));
             // mod.rs
-            let ctrl_mod = read_file("src/app/Http/Controllers/mod.rs");
-            assert!(ctrl_mod.contains("pub mod Auth;"));
-            assert!(ctrl_mod.contains("pub mod DashboardController;"));
+            let ctrl_mod = read_file("src/app/http/controllers/mod.rs");
+            assert!(ctrl_mod.contains("pub mod auth;"));
+            assert!(ctrl_mod.contains("pub mod dashboard_controller;"));
             // Requests
-            let req_mod = read_file("src/app/Http/Requests/mod.rs");
+            let req_mod = read_file("src/app/http/requests/mod.rs");
             assert!(req_mod.contains("pub mod login_request;"));
             assert!(req_mod.contains("pub mod register_request;"));
             // Routes
@@ -2394,9 +2443,9 @@ mod tests {
         with_app(|| {
             auth(true)?;
 
-            assert!(file_exists("src/app/Http/Controllers/Auth/ApiLoginController.rs"));
-            assert!(file_exists("src/app/Http/Controllers/Auth/ApiRegisterController.rs"));
-            assert!(!file_exists("src/app/Http/Controllers/DashboardController.rs"),
+            assert!(file_exists("src/app/http/controllers/auth/api_login_controller.rs"));
+            assert!(file_exists("src/app/http/controllers/auth/api_register_controller.rs"));
+            assert!(!file_exists("src/app/http/controllers/dashboard_controller.rs"),
                 "api auth must not create DashboardController");
             let api_rs = read_file("src/routes/api.rs");
             for r in &["/api/auth/login", "/api/auth/refresh",
@@ -2410,31 +2459,31 @@ mod tests {
         });
     }
 
-    // ── Multi-command: controller → auth (web) ────────────────────────────────
+    // ── Multi-command: controller ↁEauth (web) ────────────────────────────────
 
     #[test]
     fn int_09_controller_then_auth_web() {
         with_app(|| {
             // Step 1
             controller("PostController")?;
-            assert!(file_exists("src/app/Http/Controllers/PostController.rs"),
+            assert!(file_exists("src/app/http/controllers/post_controller.rs"),
                 "step1: PostController missing");
-            let mod_after_ctrl = read_file("src/app/Http/Controllers/mod.rs");
-            assert!(mod_after_ctrl.contains("pub mod PostController;"),
+            let mod_after_ctrl = read_file("src/app/http/controllers/mod.rs");
+            assert!(mod_after_ctrl.contains("pub mod post_controller;"),
                 "step1: PostController not in mod.rs");
 
             // Step 2
             auth(false)?;
-            assert!(file_exists("src/app/Http/Controllers/Auth/LoginController.rs"),
+            assert!(file_exists("src/app/http/controllers/auth/login_controller.rs"),
                 "step2: LoginController missing");
-            let mod_final = read_file("src/app/Http/Controllers/mod.rs");
+            let mod_final = read_file("src/app/http/controllers/mod.rs");
             // PostController must survive
-            assert!(mod_final.contains("pub mod PostController;"),
+            assert!(mod_final.contains("pub mod post_controller;"),
                 "step2: PostController lost from mod.rs");
-            assert!(mod_final.contains("pub mod Auth;"));
-            assert!(mod_final.contains("pub mod DashboardController;"));
+            assert!(mod_final.contains("pub mod auth;"));
+            assert!(mod_final.contains("pub mod dashboard_controller;"));
             // PostController file content must be intact
-            assert!(read_file("src/app/Http/Controllers/PostController.rs")
+            assert!(read_file("src/app/http/controllers/post_controller.rs")
                 .contains("\"PostController index\""),
                 "step2: PostController file corrupted");
             // Web routes present
@@ -2446,7 +2495,7 @@ mod tests {
         });
     }
 
-    // ── Multi-command: auth (web) → controller ────────────────────────────────
+    // ── Multi-command: auth (web) ↁEcontroller ────────────────────────────────
 
     #[test]
     fn int_10_auth_web_then_controller() {
@@ -2461,87 +2510,87 @@ mod tests {
             // Routes must be unchanged
             assert_eq!(read_file("src/routes/web.rs"), web_after,
                 "step2: web.rs changed after make:controller");
-            let ctrl_mod = read_file("src/app/Http/Controllers/mod.rs");
-            assert!(ctrl_mod.contains("pub mod CommentController;"),
+            let ctrl_mod = read_file("src/app/http/controllers/mod.rs");
+            assert!(ctrl_mod.contains("pub mod comment_controller;"),
                 "step2: CommentController missing from mod.rs");
-            assert!(ctrl_mod.contains("pub mod Auth;"),
+            assert!(ctrl_mod.contains("pub mod auth;"),
                 "step2: Auth lost from mod.rs");
             Ok(())
         });
     }
 
-    // ── Multi-command: request → model → controller ───────────────────────────
+    // ── Multi-command: request ↁEmodel ↁEcontroller ───────────────────────────
 
     #[test]
     fn int_11_request_then_model_then_controller() {
         with_app(|| {
             // Step 1: make:request
             request("StorePostRequest")?;
-            assert!(file_exists("src/app/Http/Requests/StorePostRequest.rs"),
+            assert!(file_exists("src/app/http/requests/store_post_request.rs"),
                 "step1: file missing");
-            assert!(read_file("src/app/Http/Requests/StorePostRequest.rs")
+            assert!(read_file("src/app/http/requests/store_post_request.rs")
                 .contains("pub struct StorePostRequest"), "step1: wrong struct name");
-            assert!(read_file("src/app/Http/Requests/mod.rs")
-                .contains("pub mod StorePostRequest;"), "step1: not in requests mod.rs");
+            assert!(read_file("src/app/http/requests/mod.rs")
+                .contains("pub mod store_post_request;"), "step1: not in requests mod.rs");
 
             // Step 2: make:model (must not touch Requests)
             model("Post")?;
-            assert!(file_exists("src/app/Models/Post.rs"), "step2: model file missing");
-            assert!(read_file("src/app/Models/Post.rs").contains("impl Post"),
+            assert!(file_exists("src/app/models/post.rs"), "step2: model file missing");
+            assert!(read_file("src/app/models/post.rs").contains("impl Post"),
                 "step2: impl block missing");
-            assert!(read_file("src/app/Http/Requests/mod.rs")
-                .contains("pub mod StorePostRequest;"),
+            assert!(read_file("src/app/http/requests/mod.rs")
+                .contains("pub mod store_post_request;"),
                 "step2: requests mod.rs corrupted by model command");
 
             // Step 3: make:controller (must not touch Requests or Models)
             controller("PostController")?;
-            assert!(file_exists("src/app/Http/Controllers/PostController.rs"),
+            assert!(file_exists("src/app/http/controllers/post_controller.rs"),
                 "step3: controller file missing");
-            assert!(read_file("src/app/Models/mod.rs").contains("pub mod Post;"),
+            assert!(read_file("src/app/models/mod.rs").contains("pub mod post;"),
                 "step3: Models mod.rs corrupted by controller command");
-            assert!(read_file("src/app/Http/Requests/mod.rs")
-                .contains("pub mod StorePostRequest;"),
+            assert!(read_file("src/app/http/requests/mod.rs")
+                .contains("pub mod store_post_request;"),
                 "step3: Requests mod.rs corrupted by controller command");
             Ok(())
         });
     }
 
-    // ── Multi-command: controller → migration → auth (api) ───────────────────
+    // ── Multi-command: controller ↁEmigration ↁEauth (api) ───────────────────
 
     #[test]
     fn int_12_controller_then_migration_then_auth_api() {
         with_app(|| {
             // Step 1
             controller("ArticleController")?;
-            assert!(file_exists("src/app/Http/Controllers/ArticleController.rs"),
+            assert!(file_exists("src/app/http/controllers/article_controller.rs"),
                 "step1: controller missing");
 
             // Step 2
             migration("create_articles_table")?;
             assert_eq!(find_migrations("create_articles_table.up.sql").len(), 1,
                 "step2: wrong number of up migrations");
-            assert!(file_exists("src/app/Http/Controllers/ArticleController.rs"),
+            assert!(file_exists("src/app/http/controllers/article_controller.rs"),
                 "step2: controller removed by migration command");
 
             // Step 3
             auth(true)?;
-            assert!(file_exists("src/app/Http/Controllers/ArticleController.rs"),
+            assert!(file_exists("src/app/http/controllers/article_controller.rs"),
                 "step3: controller removed by auth command");
             assert_eq!(find_migrations("create_articles_table.up.sql").len(), 1,
                 "step3: migration count changed after auth");
             let api = read_file("src/routes/api.rs");
             assert!(api.contains("/api/auth/login"), "step3: api route missing");
             assert!(api.contains("/api/me"),          "step3: /api/me missing");
-            let ctrl_mod = read_file("src/app/Http/Controllers/mod.rs");
-            assert!(ctrl_mod.contains("pub mod ArticleController;"),
+            let ctrl_mod = read_file("src/app/http/controllers/mod.rs");
+            assert!(ctrl_mod.contains("pub mod article_controller;"),
                 "step3: ArticleController lost after auth");
-            assert!(ctrl_mod.contains("pub mod Auth;"),
+            assert!(ctrl_mod.contains("pub mod auth;"),
                 "step3: Auth not added to mod.rs");
             Ok(())
         });
     }
 
-    // ── Multi-command: auth (api) → controller → request → model ─────────────
+    // ── Multi-command: auth (api) ↁEcontroller ↁErequest ↁEmodel ─────────────
 
     #[test]
     fn int_13_auth_api_then_controller_then_request_then_model() {
@@ -2555,28 +2604,28 @@ mod tests {
             controller("TagController")?;
             assert_eq!(read_file("src/routes/api.rs"), api_snapshot,
                 "step2: api.rs changed by make:controller");
-            let ctrl_mod = read_file("src/app/Http/Controllers/mod.rs");
-            assert!(ctrl_mod.contains("pub mod TagController;"),
+            let ctrl_mod = read_file("src/app/http/controllers/mod.rs");
+            assert!(ctrl_mod.contains("pub mod tag_controller;"),
                 "step2: TagController not in mod.rs");
-            assert!(ctrl_mod.contains("pub mod Auth;"),
+            assert!(ctrl_mod.contains("pub mod auth;"),
                 "step2: Auth lost from mod.rs");
 
             // Step 3: make:request must not touch Controllers or api.rs
             request("StoreTagRequest")?;
-            assert!(read_file("src/app/Http/Requests/mod.rs")
-                .contains("pub mod StoreTagRequest;"), "step3: not in requests mod.rs");
-            assert!(read_file("src/app/Http/Controllers/mod.rs")
-                .contains("pub mod TagController;"),
+            assert!(read_file("src/app/http/requests/mod.rs")
+                .contains("pub mod store_tag_request;"), "step3: not in requests mod.rs");
+            assert!(read_file("src/app/http/controllers/mod.rs")
+                .contains("pub mod tag_controller;"),
                 "step3: controllers mod.rs corrupted by request command");
             assert_eq!(read_file("src/routes/api.rs"), api_snapshot,
                 "step3: api.rs changed by make:request");
 
             // Step 4: make:model must not touch anything above
             model("Tag")?;
-            assert!(read_file("src/app/Models/mod.rs")
-                .contains("pub mod Tag;"), "step4: Tag not in models mod.rs");
-            assert!(read_file("src/app/Http/Requests/mod.rs")
-                .contains("pub mod StoreTagRequest;"),
+            assert!(read_file("src/app/models/mod.rs")
+                .contains("pub mod tag;"), "step4: Tag not in models mod.rs");
+            assert!(read_file("src/app/http/requests/mod.rs")
+                .contains("pub mod store_tag_request;"),
                 "step4: requests mod.rs corrupted by model command");
             assert_eq!(read_file("src/routes/api.rs"), api_snapshot,
                 "step4: api.rs changed by make:model");
@@ -2584,7 +2633,7 @@ mod tests {
         });
     }
 
-    // ── Multi-command: view → middleware → auth (web) ─────────────────────────
+    // ── Multi-command: view ↁEmiddleware ↁEauth (web) ─────────────────────────
 
     #[test]
     fn int_14_view_then_middleware_then_auth_web() {
@@ -2598,7 +2647,7 @@ mod tests {
 
             // Step 2
             middleware("AdminOnly")?;
-            assert!(file_exists("src/app/Http/Middleware/AdminOnly.rs"),
+            assert!(file_exists("src/app/http/middleware/admin_only.rs"),
                 "step2: middleware file missing");
             assert_eq!(read_file("src/resources/views/admin/dashboard.jinja.html"), view_content,
                 "step2: view file changed by middleware command");
@@ -2610,8 +2659,8 @@ mod tests {
             // Earlier files must survive
             assert!(file_exists("src/resources/views/admin/dashboard.jinja.html"),
                 "step3: custom view removed by auth command");
-            assert!(read_file("src/app/Http/Middleware/mod.rs")
-                .contains("pub mod AdminOnly;"),
+            assert!(read_file("src/app/http/middleware/mod.rs")
+                .contains("pub mod admin_only;"),
                 "step3: AdminOnly lost from middleware mod.rs after auth");
             Ok(())
         });
@@ -2621,31 +2670,31 @@ mod tests {
 
     #[test]
     fn int_15_reversed_order_same_final_state() {
-        // Forward: controller → request → model → auth(web)
-        // Reversed: auth(web) → model → request → controller
+        // Forward: controller ↁErequest ↁEmodel ↁEauth(web)
+        // Reversed: auth(web) ↁEmodel ↁErequest ↁEcontroller
         // Final Controllers mod.rs state must include the same entries either way.
 
         with_app(|| {
             auth(false)?;
 
             // After auth: verify auth entries
-            let ctrl_mod = read_file("src/app/Http/Controllers/mod.rs");
-            assert!(ctrl_mod.contains("pub mod Auth;"));
-            assert!(ctrl_mod.contains("pub mod DashboardController;"));
+            let ctrl_mod = read_file("src/app/http/controllers/mod.rs");
+            assert!(ctrl_mod.contains("pub mod auth;"));
+            assert!(ctrl_mod.contains("pub mod dashboard_controller;"));
 
             model("Widget")?;
-            assert!(read_file("src/app/Models/mod.rs").contains("pub mod Widget;"),
+            assert!(read_file("src/app/models/mod.rs").contains("pub mod widget;"),
                 "Widget not in models mod.rs");
 
             request("StoreWidgetRequest")?;
-            assert!(read_file("src/app/Http/Requests/mod.rs")
-                .contains("pub mod StoreWidgetRequest;"));
+            assert!(read_file("src/app/http/requests/mod.rs")
+                .contains("pub mod store_widget_request;"));
 
             controller("WidgetController")?;
             // Final state: WidgetController in controllers mod, Auth still there
-            let final_ctrl = read_file("src/app/Http/Controllers/mod.rs");
-            assert!(final_ctrl.contains("pub mod WidgetController;"));
-            assert!(final_ctrl.contains("pub mod Auth;"),
+            let final_ctrl = read_file("src/app/http/controllers/mod.rs");
+            assert!(final_ctrl.contains("pub mod widget_controller;"));
+            assert!(final_ctrl.contains("pub mod auth;"),
                 "Auth lost after adding WidgetController");
             // Routes unchanged by non-auth commands
             let web = read_file("src/routes/web.rs");
@@ -2662,18 +2711,18 @@ mod tests {
     fn int_16_duplicate_controller_returns_error_no_corruption() {
         with_app(|| {
             controller("DupeController")?;
-            let original = read_file("src/app/Http/Controllers/DupeController.rs");
+            let original = read_file("src/app/http/controllers/dupe_controller.rs");
 
             // Second call must fail
             assert!(controller("DupeController").is_err(),
                 "second controller() call must return Err");
             // File must be unchanged
-            assert_eq!(read_file("src/app/Http/Controllers/DupeController.rs"), original,
+            assert_eq!(read_file("src/app/http/controllers/dupe_controller.rs"), original,
                 "controller file modified by failed second call");
             // mod.rs must have exactly one occurrence
             assert_eq!(
-                read_file("src/app/Http/Controllers/mod.rs")
-                    .matches("pub mod DupeController;").count(),
+                read_file("src/app/http/controllers/mod.rs")
+                    .matches("pub mod dupe_controller;").count(),
                 1,
                 "mod.rs has duplicate entry after failed second call"
             );
@@ -2685,12 +2734,12 @@ mod tests {
     fn int_17_duplicate_model_returns_error_no_corruption() {
         with_app(|| {
             model("Post")?;
-            let original = read_file("src/app/Models/Post.rs");
+            let original = read_file("src/app/models/post.rs");
 
             assert!(model("Post").is_err(), "second model() must return Err");
-            assert_eq!(read_file("src/app/Models/Post.rs"), original);
+            assert_eq!(read_file("src/app/models/post.rs"), original);
             assert_eq!(
-                read_file("src/app/Models/mod.rs").matches("pub mod Post;").count(),
+                read_file("src/app/models/mod.rs").matches("pub mod post;").count(),
                 1
             );
             Ok(())
@@ -2704,17 +2753,17 @@ mod tests {
         with_app(|| {
             auth(false)?;
             let web_snap  = read_file("src/routes/web.rs");
-            let mod_snap  = read_file("src/app/Http/Controllers/mod.rs");
-            let req_snap  = read_file("src/app/Http/Requests/mod.rs");
+            let mod_snap  = read_file("src/app/http/controllers/mod.rs");
+            let req_snap  = read_file("src/app/http/requests/mod.rs");
 
-            // Second call: files exist → skips files, routes already present → skips injection
+            // Second call: files exist ↁEskips files, routes already present ↁEskips injection
             auth(false)?;
 
             assert_eq!(read_file("src/routes/web.rs"), web_snap,
                 "web.rs changed on second auth(web) call");
-            assert_eq!(read_file("src/app/Http/Controllers/mod.rs"), mod_snap,
+            assert_eq!(read_file("src/app/http/controllers/mod.rs"), mod_snap,
                 "controllers mod.rs changed on second auth(web) call");
-            assert_eq!(read_file("src/app/Http/Requests/mod.rs"), req_snap,
+            assert_eq!(read_file("src/app/http/requests/mod.rs"), req_snap,
                 "requests mod.rs changed on second auth(web) call");
             // Each route appears exactly once
             for r in &["\"/login\"", "\"/logout\"", "\"/register\"", "\"/dashboard\""] {
@@ -2734,7 +2783,7 @@ mod tests {
             auth(true)?;
             let api_snap = read_file("src/routes/api.rs");
             assert!(api_snap.contains("/api/me"), "step1: /api/me missing");
-            assert!(file_exists("src/app/Http/Controllers/Auth/ApiLoginController.rs"));
+            assert!(file_exists("src/app/http/controllers/auth/api_login_controller.rs"));
 
             // Step 2
             auth(false)?;
@@ -2747,9 +2796,9 @@ mod tests {
                 assert!(web.contains(r), "step2: web.rs missing {}", r);
             }
             // Auth/mod.rs must contain all 4 controller declarations
-            let auth_mod = read_file("src/app/Http/Controllers/Auth/mod.rs");
-            for decl in &["ApiLoginController", "ApiRegisterController",
-                           "LoginController", "RegisterController"] {
+            let auth_mod = read_file("src/app/http/controllers/auth/mod.rs");
+            for decl in &["api_login_controller", "api_register_controller",
+                           "login_controller", "register_controller"] {
                 assert!(auth_mod.contains(&format!("pub mod {};", decl)),
                     "Auth/mod.rs missing {}", decl);
             }
@@ -2768,11 +2817,11 @@ mod tests {
             // Create each controller and verify immediately after
             for name in &controllers {
                 controller(name)?;
-                assert!(file_exists(&format!("src/app/Http/Controllers/{}.rs", name)),
+                assert!(file_exists(&format!("src/app/http/controllers/{}.rs", to_snake_case(name))),
                     "{}: file not created", name);
                 assert!(
-                    read_file("src/app/Http/Controllers/mod.rs")
-                        .contains(&format!("pub mod {};", name)),
+                    read_file("src/app/http/controllers/mod.rs")
+                        .contains(&format!("pub mod {};", to_snake_case(name))),
                     "{}: not in mod.rs after its own creation", name
                 );
             }
@@ -2781,12 +2830,12 @@ mod tests {
             auth(false)?;
 
             // Every controller + auth entries must appear exactly once
-            let ctrl_mod = read_file("src/app/Http/Controllers/mod.rs");
+            let ctrl_mod = read_file("src/app/http/controllers/mod.rs");
             for name in controllers.iter()
-                .chain(&["Auth", "DashboardController"])
+                .chain(&["auth", "dashboard_controller"])
             {
                 assert_eq!(
-                    ctrl_mod.matches(&format!("pub mod {};", name)).count(),
+                    ctrl_mod.matches(&format!("pub mod {};", to_snake_case(name))).count(),
                     1,
                     "{} must appear exactly once in mod.rs", name
                 );
@@ -2806,17 +2855,17 @@ mod tests {
             controller("BlogController")?;
             request("CreateBlog")?;
 
-            let ctrl_mod = read_file("src/app/Http/Controllers/mod.rs");
-            let req_mod  = read_file("src/app/Http/Requests/mod.rs");
+            let ctrl_mod = read_file("src/app/http/controllers/mod.rs");
+            let req_mod  = read_file("src/app/http/requests/mod.rs");
 
-            assert!(ctrl_mod.contains("pub mod BlogController;"), "controller missing from Controllers/mod.rs");
-            assert!(req_mod.contains("pub mod CreateBlog;"), "request missing from Requests/mod.rs");
+            assert!(ctrl_mod.contains("pub mod blog_controller;"), "controller missing from Controllers/mod.rs");
+            assert!(req_mod.contains("pub mod create_blog;"), "request missing from Requests/mod.rs");
 
             assert!(!ctrl_mod.contains("CreateBlog"), "request name leaked into Controllers/mod.rs");
             assert!(!req_mod.contains("BlogController"), "controller name leaked into Requests/mod.rs");
 
-            assert!(file_exists("src/app/Http/Controllers/BlogController.rs"));
-            assert!(file_exists("src/app/Http/Requests/CreateBlog.rs"));
+            assert!(file_exists("src/app/http/controllers/blog_controller.rs"));
+            assert!(file_exists("src/app/http/requests/create_blog.rs"));
             Ok(())
         });
     }
@@ -2827,11 +2876,11 @@ mod tests {
             model("Post")?;
             view_file("posts/index")?;
 
-            let model_mod = read_file("src/app/Models/mod.rs");
-            assert!(model_mod.contains("pub mod Post;"), "model missing from Models/mod.rs");
+            let model_mod = read_file("src/app/models/mod.rs");
+            assert!(model_mod.contains("pub mod post;"), "model missing from Models/mod.rs");
             assert!(!model_mod.contains("posts"), "view path leaked into Models/mod.rs");
 
-            assert!(file_exists("src/app/Models/Post.rs"));
+            assert!(file_exists("src/app/models/post.rs"));
             assert!(file_exists("src/resources/views/posts/index.jinja.html"));
             Ok(())
         });
@@ -2847,23 +2896,23 @@ mod tests {
             middleware("RateLimit")?;
             migration("create_galleries_table")?;
 
-            assert!(file_exists("src/app/Http/Controllers/GalleryController.rs"));
-            assert!(file_exists("src/app/Http/Requests/StoreGallery.rs"));
-            assert!(file_exists("src/app/Models/Gallery.rs"));
+            assert!(file_exists("src/app/http/controllers/gallery_controller.rs"));
+            assert!(file_exists("src/app/http/requests/store_gallery.rs"));
+            assert!(file_exists("src/app/models/gallery.rs"));
             assert!(file_exists("src/resources/views/gallery/show.jinja.html"));
-            assert!(file_exists("src/app/Http/Middleware/RateLimit.rs"));
+            assert!(file_exists("src/app/http/middleware/rate_limit.rs"));
 
-            let ctrl_mod = read_file("src/app/Http/Controllers/mod.rs");
-            assert!(ctrl_mod.contains("pub mod GalleryController;"));
+            let ctrl_mod = read_file("src/app/http/controllers/mod.rs");
+            assert!(ctrl_mod.contains("pub mod gallery_controller;"));
 
-            let req_mod = read_file("src/app/Http/Requests/mod.rs");
-            assert!(req_mod.contains("pub mod StoreGallery;"));
+            let req_mod = read_file("src/app/http/requests/mod.rs");
+            assert!(req_mod.contains("pub mod store_gallery;"));
 
-            let mdl_mod = read_file("src/app/Models/mod.rs");
-            assert!(mdl_mod.contains("pub mod Gallery;"));
+            let mdl_mod = read_file("src/app/models/mod.rs");
+            assert!(mdl_mod.contains("pub mod gallery;"));
 
-            let mw_mod = read_file("src/app/Http/Middleware/mod.rs");
-            assert!(mw_mod.contains("pub mod RateLimit;"));
+            let mw_mod = read_file("src/app/http/middleware/mod.rs");
+            assert!(mw_mod.contains("pub mod rate_limit;"));
 
             assert!(!find_migrations("create_galleries_table").is_empty(), "migration file not found");
             Ok(())
@@ -2885,7 +2934,7 @@ mod tests {
             assert_eq!(products.len(), 2, "expected up+down for create_products_table");
             assert_eq!(reviews.len(),  2, "expected up+down for create_reviews_table");
 
-            // Each migration has its own prefix — no file is shared
+            // Each migration has its own prefix  Eno file is shared
             let order_names:   Vec<_> = orders.iter().map(|p| p.file_name().unwrap().to_string_lossy().to_string()).collect();
             let product_names: Vec<_> = products.iter().map(|p| p.file_name().unwrap().to_string_lossy().to_string()).collect();
             for name in &order_names {
@@ -2903,13 +2952,13 @@ mod tests {
             request("StoreBlog")?;
             request("StoreComment")?;
 
-            let ctrl_mod = read_file("src/app/Http/Controllers/mod.rs");
-            let req_mod  = read_file("src/app/Http/Requests/mod.rs");
+            let ctrl_mod = read_file("src/app/http/controllers/mod.rs");
+            let req_mod  = read_file("src/app/http/requests/mod.rs");
 
-            assert!(ctrl_mod.contains("pub mod BlogController;"));
-            assert!(ctrl_mod.contains("pub mod CommentController;"));
-            assert!(req_mod.contains("pub mod StoreBlog;"));
-            assert!(req_mod.contains("pub mod StoreComment;"));
+            assert!(ctrl_mod.contains("pub mod blog_controller;"));
+            assert!(ctrl_mod.contains("pub mod comment_controller;"));
+            assert!(req_mod.contains("pub mod store_blog;"));
+            assert!(req_mod.contains("pub mod store_comment;"));
 
             // No leakage
             assert!(!ctrl_mod.contains("StoreBlog"));
@@ -2926,13 +2975,13 @@ mod tests {
             controller("ArticleController")?;
             middleware("Throttle")?;
 
-            let ctrl_mod = read_file("src/app/Http/Controllers/mod.rs");
-            let mw_mod   = read_file("src/app/Http/Middleware/mod.rs");
+            let ctrl_mod = read_file("src/app/http/controllers/mod.rs");
+            let mw_mod   = read_file("src/app/http/middleware/mod.rs");
 
-            assert!(ctrl_mod.contains("pub mod ArticleController;"));
+            assert!(ctrl_mod.contains("pub mod article_controller;"));
             assert!(!ctrl_mod.contains("Throttle"), "middleware name leaked into Controllers/mod.rs");
 
-            assert!(mw_mod.contains("pub mod Throttle;"));
+            assert!(mw_mod.contains("pub mod throttle;"));
             assert!(!mw_mod.contains("ArticleController"), "controller name leaked into Middleware/mod.rs");
             Ok(())
         });
@@ -2968,10 +3017,10 @@ mod tests {
             controller("SlugController")?;
 
             assert!(!find_migrations("add_slug_to_posts").is_empty());
-            assert!(file_exists("src/app/Http/Controllers/SlugController.rs"));
+            assert!(file_exists("src/app/http/controllers/slug_controller.rs"));
 
-            let ctrl_mod = read_file("src/app/Http/Controllers/mod.rs");
-            assert!(ctrl_mod.contains("pub mod SlugController;"));
+            let ctrl_mod = read_file("src/app/http/controllers/mod.rs");
+            assert!(ctrl_mod.contains("pub mod slug_controller;"));
             assert!(!ctrl_mod.contains("add_slug"), "migration name leaked into Controllers/mod.rs");
             Ok(())
         });
@@ -2983,13 +3032,13 @@ mod tests {
             request("UpdateProfile")?;
             model("Profile")?;
 
-            let req_mod = read_file("src/app/Http/Requests/mod.rs");
-            let mdl_mod = read_file("src/app/Models/mod.rs");
+            let req_mod = read_file("src/app/http/requests/mod.rs");
+            let mdl_mod = read_file("src/app/models/mod.rs");
 
-            assert!(req_mod.contains("pub mod UpdateProfile;"));
-            assert!(mdl_mod.contains("pub mod Profile;"));
+            assert!(req_mod.contains("pub mod update_profile;"));
+            assert!(mdl_mod.contains("pub mod profile;"));
 
-            assert!(!req_mod.contains("pub mod Profile;"), "model leaked into Requests/mod.rs");
+            assert!(!req_mod.contains("pub mod profile;"), "model leaked into Requests/mod.rs");
             assert!(!mdl_mod.contains("UpdateProfile"), "request leaked into Models/mod.rs");
             Ok(())
         });

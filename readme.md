@@ -35,59 +35,59 @@ cargo run --manifest-path /path/to/willow/Cargo.toml -- new my-app
 ```text
 my-app/
 ├── src/
-│   ├── main.rs
-│   ├── middleware.rs               ← global / api / web middleware groups
-│   ├── app/
-│   │   ├── mod.rs
-│   │   ├── Http/
-│   │   │   ├── mod.rs
-│   │   │   ├── Controllers/
-│   │   │   │   ├── mod.rs
-│   │   │   │   ├── HomeController.rs
-│   │   │   │   ├── UserController.rs
-│   │   │   │   └── StatusController.rs
-│   │   │   ├── Middleware/
-│   │   │   │   ├── mod.rs
-│   │   │   │   └── LogRequest.rs
-│   │   │   └── Requests/
-│   │   │       ├── mod.rs
-│   │   │       └── StoreUserRequest.rs
-│   │   ├── Models/
-│   │   │   ├── mod.rs
-│   │   │   └── User.rs
-│   │   └── Exceptions/
-│   │       ├── mod.rs
-│   │       └── Handler.rs
-│   └── routes/
-│       ├── mod.rs
-│       ├── web.rs
-│       └── api.rs
+━E  ├── main.rs
+━E  ├── middleware.rs               ↁEglobal / api / web middleware groups
+━E  ├── app/
+━E  ━E  ├── mod.rs
+━E  ━E  ├── http/
+━E  ━E  ━E  ├── mod.rs
+━E  ━E  ━E  ├── controllers/
+━E  ━E  ━E  ━E  ├── mod.rs
+━E  ━E  ━E  ━E  ├── home_controller.rs
+━E  ━E  ━E  ━E  ├── user_controller.rs
+━E  ━E  ━E  ━E  └── status_controller.rs
+━E  ━E  ━E  ├── Middleware/
+━E  ━E  ━E  ━E  ├── mod.rs
+━E  ━E  ━E  ━E  └── log_request.rs
+━E  ━E  ━E  └── Requests/
+━E  ━E  ━E      ├── mod.rs
+━E  ━E  ━E      └── store_user_request.rs
+━E  ━E  ├── models/
+━E  ━E  ━E  ├── mod.rs
+━E  ━E  ━E  └── User.rs
+━E  ━E  └── exceptions/
+━E  ━E      ├── mod.rs
+━E  ━E      └── Handler.rs
+━E  └── routes/
+━E      ├── mod.rs
+━E      ├── web.rs
+━E      └── api.rs
 ├── bootstrap/
-│   ├── lib.rs                      ← library root, bootstrap() lives here
-│   └── app_service_provider.rs
+━E  ├── lib.rs                      ↁElibrary root, bootstrap() lives here
+━E  └── app_service_provider.rs
 ├── config/
-│   ├── app.toml
-│   ├── auth.toml
-│   ├── cache.toml
-│   └── database.toml
+━E  ├── app.toml
+━E  ├── auth.toml
+━E  ├── cache.toml
+━E  └── database.toml
 ├── database/
-│   └── migrations/
+━E  └── migrations/
 ├── resources/
-│   └── views/
-│       ├── layouts/
-│       │   └── app.jinja.html
-│       ├── errors/
-│       │   ├── 404.jinja.html
-│       │   ├── 500.jinja.html
-│       │   └── generic.jinja.html
-│       └── welcome.jinja.html
+━E  └── views/
+━E      ├── layouts/
+━E      ━E  └── app.jinja.html
+━E      ├── errors/
+━E      ━E  ├── 404.jinja.html
+━E      ━E  ├── 500.jinja.html
+━E      ━E  └── generic.jinja.html
+━E      └── welcome.jinja.html
 ├── docker/
-│   └── docker-compose.yml
+━E  └── docker-compose.yml
 ├── .env
 └── Cargo.toml
 ```
 
-All Rust source files live under `src/`. There are no `#[path]` attributes anywhere — the standard Rust module system is used throughout.
+All Rust source files live under `src/`. There are no `#[path]` attributes anywhere  Ethe standard Rust module system is used throughout.
 
 ---
 
@@ -99,26 +99,26 @@ Each file returns an `axum::Router<Arc<AppState>>`:
 
 ```rust
 // src/routes/web.rs
-use crate::app::Http::Controllers::HomeController;
+use crate::app::http::controllers::home_controller;
 use axum::{routing::get, Router};
 use std::sync::Arc;
 use my_app::AppState;
 
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/", get(HomeController::index))
+        .route("/", get(home_controller::index))
 }
 
 // src/routes/api.rs
-use crate::app::Http::Controllers::{UserController, StatusController};
+use crate::app::http::controllers::{user_controller, status_controller};
 use axum::{routing::get, Router};
 use std::sync::Arc;
 use my_app::AppState;
 
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/api/users", get(UserController::index).post(UserController::store))
-        .route("/api/status", get(StatusController::index))
+        .route("/api/users", get(user_controller::index).post(user_controller::store))
+        .route("/api/status", get(status_controller::index))
 }
 ```
 
@@ -133,7 +133,7 @@ let app = middleware::global(
 )
 .layer(axum::middleware::from_fn_with_state(
     Arc::clone(&app_state),
-    app::Exceptions::Handler::render,
+    app::exceptions::handler::render,
 ))
 .with_state(app_state);
 ```
@@ -202,15 +202,15 @@ pub enum AppError {
 Controllers return `Result<impl IntoResponse, AppError>`. `From` impls let `?` propagate errors automatically:
 
 ```rust
-// ViewError → AppError::View via ?
+// ViewError ↁEAppError::View via ?
 pub async fn index(ctx: Context) -> Result<impl IntoResponse, AppError> {
     Ok(view(&ctx, "welcome", context! { ... })?)
 }
 
-// sqlx::Error → AppError::Database via ?
+// sqlx::Error ↁEAppError::Database via ?
 let users = sqlx::query_as::<_, User>(...).fetch_all(pool).await?;
 
-// Known conflict → AppError::Conflict
+// Known conflict ↁEAppError::Conflict
 .map_err(|e| match e {
     sqlx::Error::Database(ref db) if db.constraint() == Some("users_email_key")
         => AppError::Conflict("Email already taken.".to_string()),
@@ -234,15 +234,15 @@ let users = sqlx::query_as::<_, User>(...).fetch_all(pool).await?;
 
 ### HTML error views
 
-For browser requests, the exception handler in `src/app/Exceptions/Handler.rs` automatically renders HTML views from `resources/views/errors/`:
+For browser requests, the exception handler in `src/app/exceptions/handler.rs` automatically renders HTML views from `resources/views/errors/`:
 
-- `errors/404.jinja.html` — 404 specific
-- `errors/500.jinja.html` — 500 specific
-- `errors/generic.jinja.html` — fallback for all other codes
+- `errors/404.jinja.html`  E404 specific
+- `errors/500.jinja.html`  E500 specific
+- `errors/generic.jinja.html`  Efallback for all other codes
 
 Variables available: `code`, `message`, `app_name`, `app_env`.
 
-### JSON vs HTML — expectsJson()
+### JSON vs HTML  EexpectsJson()
 
 `Handler.rs` decides whether to render HTML or pass through JSON, mirroring Laravel's `$request->expectsJson()`:
 
@@ -253,7 +253,7 @@ Variables available: `code`, `message`, `app_name`, `app_env`.
 | Axios / XHR (`X-Requested-With: XMLHttpRequest`) | JSON |
 | `Content-Type: application/json` | JSON |
 
-To force JSON for all `/api/*` routes, edit `expects_json()` in `src/app/Exceptions/Handler.rs`:
+To force JSON for all `/api/*` routes, edit `expects_json()` in `src/app/exceptions/handler.rs`:
 
 ```rust
 fn expects_json(request: &Request) -> bool {
@@ -266,13 +266,13 @@ fn expects_json(request: &Request) -> bool {
 
 ## Middleware
 
-`src/middleware.rs` is the single place to manage middleware — analogous to Laravel's `Kernel.php`.
+`src/middleware.rs` is the single place to manage middleware  Eanalogous to Laravel's `Kernel.php`.
 
 ```rust
 // Runs on every request (including session middleware)
 pub fn global(state: Arc<AppState>, router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
     router
-        .layer(middleware::from_fn(LogRequest::handle))
+        .layer(middleware::from_fn(log_request::handle))
         .layer(middleware::from_fn_with_state(Arc::clone(&state), session_middleware))
 }
 
@@ -294,7 +294,7 @@ Generate a new middleware skeleton:
 willow-forge make:middleware RateLimiter
 ```
 
-This creates `src/app/Http/Middleware/RateLimiter.rs` and registers `pub mod RateLimiter;` in `src/app/Http/Middleware/mod.rs`.
+This creates `src/app/http/middleware/rate_limiter.rs` and registers `pub mod rate_limiter;` in `src/app/http/middleware/mod.rs`.
 
 ---
 
@@ -378,10 +378,10 @@ Migration files live in `database/migrations/` as `.up.sql` / `.down.sql` pairs.
 
 ### Models
 
-Models live in `src/app/Models/`. Derive `FromRow` for sqlx:
+Models live in `src/app/models/`. Derive `FromRow` for sqlx:
 
 ```rust
-// src/app/Models/User.rs
+// src/app/models/user.rs
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
@@ -409,7 +409,7 @@ impl User {
 Import the model in controllers:
 
 ```rust
-use crate::app::Models::User::User;
+use crate::app::models::user::User;
 ```
 
 ### Querying
@@ -473,10 +473,10 @@ Cache::forget(&ctx, "greeting").await?;
 
 ## Validation
 
-Request structs live in `src/app/Http/Requests/`. Derive `Deserialize` and `Validate`:
+Request structs live in `src/app/http/requests/`. Derive `Deserialize` and `Validate`:
 
 ```rust
-// src/app/Http/Requests/StoreUserRequest.rs
+// src/app/http/requests/store_user_request.rs
 use serde::Deserialize;
 use validator::Validate;
 
@@ -527,7 +527,7 @@ pub async fn store(
 
 ## Auth
 
-### Session-based auth — `make:auth`
+### Session-based auth  E`make:auth`
 
 `willow-forge make:auth` scaffolds HTML form-based authentication (login, register, logout).
 
@@ -539,19 +539,19 @@ What it generates:
 
 | File | Description |
 | --- | --- |
-| `src/app/Http/Controllers/Auth/LoginController.rs` | `show` (form), `store` (login), `destroy` (logout) |
-| `src/app/Http/Controllers/Auth/RegisterController.rs` | `show` (form), `store` (register) |
-| `src/app/Http/Requests/login_request.rs` | Validated form request |
-| `src/app/Http/Requests/register_request.rs` | Validated form request |
+| `src/app/http/controllers/auth/login_controller.rs` | `show` (form), `store` (login), `destroy` (logout) |
+| `src/app/http/controllers/auth/register_controller.rs` | `show` (form), `store` (register) |
+| `src/app/http/requests/login_request.rs` | Validated form request |
+| `src/app/http/requests/register_request.rs` | Validated form request |
 | `resources/views/auth/login.jinja.html` | Login form |
 | `resources/views/auth/register.jinja.html` | Registration form |
 
 Routes are injected automatically into `src/routes/web.rs`:
 
 ```rust
-.route("/login",    get(LoginController::show).post(LoginController::store))
-.route("/logout",   post(LoginController::destroy))
-.route("/register", get(RegisterController::show).post(RegisterController::store))
+.route("/login",    get(login_controller::show).post(login_controller::store))
+.route("/logout",   post(login_controller::destroy))
+.route("/register", get(register_controller::show).post(register_controller::store))
 ```
 
 Flash errors are shown on the form when validation or login fails.
@@ -581,7 +581,7 @@ Sessions are stored in Redis under `session:{id}` with a configurable TTL (defau
 
 Two approaches are available.
 
-**Option 1 — `AuthUser` extractor (single route)**
+**Option 1  E`AuthUser` extractor (single route)**
 
 Add `AuthUser` as a parameter to any controller function. Unauthenticated requests are rejected automatically before the handler runs.
 
@@ -594,7 +594,7 @@ pub async fn dashboard(auth: AuthUser, ctx: Context) -> impl IntoResponse {
 }
 ```
 
-**Option 2 — `authenticate` middleware (route group)**
+**Option 2  E`authenticate` middleware (route group)**
 
 Use `axum::middleware::from_fn(authenticate)` on a sub-router to protect multiple routes at once. Keep public routes (login, register) in a separate router to avoid redirect loops.
 
@@ -606,13 +606,13 @@ use my_app::{AppState, authenticate};
 
 pub fn routes() -> Router<Arc<AppState>> {
     let protected = Router::new()
-        .route("/dashboard", get(DashboardController::index))
-        .route("/logout",    post(LoginController::destroy))
-        .layer(middleware::from_fn(authenticate)); // unauthenticated → 302 /login
+        .route("/dashboard", get(dashboard_controller::index))
+        .route("/logout",    post(login_controller::destroy))
+        .layer(middleware::from_fn(authenticate)); // unauthenticated ↁE302 /login
 
     let public = Router::new()
-        .route("/login",    get(LoginController::show).post(LoginController::store))
-        .route("/register", get(RegisterController::show).post(RegisterController::store));
+        .route("/login",    get(login_controller::show).post(login_controller::store))
+        .route("/register", get(register_controller::show).post(register_controller::store));
 
     Router::new()
         .merge(protected)
@@ -620,11 +620,11 @@ pub fn routes() -> Router<Arc<AppState>> {
 }
 ```
 
-> **Important:** never add `authenticate` to `/login` or `/register` — it causes an infinite redirect loop.
+> **Important:** never add `authenticate` to `/login` or `/register`  Eit causes an infinite redirect loop.
 
-`AuthUser` and `authenticate` both return 302 → `/login` for browser requests and 401 JSON for `/api/*` or `Accept: application/json` requests.
+`AuthUser` and `authenticate` both return 302 ↁE`/login` for browser requests and 401 JSON for `/api/*` or `Accept: application/json` requests.
 
-### JWT-based auth — `make:auth --api`
+### JWT-based auth  E`make:auth --api`
 
 `willow-forge make:auth --api` scaffolds stateless JWT authentication for REST API routes.
 
@@ -636,15 +636,15 @@ What it generates:
 
 | File | Description |
 | --- | --- |
-| `src/app/Http/Controllers/Auth/LoginController.rs` | `store` (login → JWT token), `destroy` (logout → blacklist) |
-| `src/app/Http/Controllers/Auth/RegisterController.rs` | `store` (register → JWT token) |
+| `src/app/http/controllers/auth/login_controller.rs` | `store` (login ↁEJWT token), `destroy` (logout ↁEblacklist) |
+| `src/app/http/controllers/auth/register_controller.rs` | `store` (register ↁEJWT token) |
 
 Routes are injected automatically into `src/routes/api.rs`:
 
 ```rust
-.route("/api/auth/login",    post(LoginController::store))
-.route("/api/auth/logout",   post(LoginController::destroy))
-.route("/api/auth/register", post(RegisterController::store))
+.route("/api/auth/login",    post(login_controller::store))
+.route("/api/auth/logout",   post(login_controller::destroy))
+.route("/api/auth/register", post(register_controller::store))
 ```
 
 #### JWT API
@@ -687,10 +687,10 @@ JWT tokens are signed with `JWT_SECRET` from `.env`. Default expiry is 3600 seco
 | Command | Description |
 | --- | --- |
 | `willow-forge new <name>` | Scaffold a new application |
-| `willow-forge make:controller <Name>` | Create `src/app/Http/Controllers/<Name>.rs` |
-| `willow-forge make:request <Name>` | Create `src/app/Http/Requests/<Name>.rs` |
-| `willow-forge make:model <Name>` | Create `src/app/Models/<Name>.rs` |
-| `willow-forge make:middleware <Name>` | Create `src/app/Http/Middleware/<Name>.rs` |
+| `willow-forge make:controller <Name>` | Create `src/app/http/controllers/<Name>.rs` |
+| `willow-forge make:request <Name>` | Create `src/app/http/requests/<Name>.rs` |
+| `willow-forge make:model <Name>` | Create `src/app/models/<Name>.rs` |
+| `willow-forge make:middleware <Name>` | Create `src/app/http/middleware/<Name>.rs` |
 | `willow-forge make:view <name>` | Create a view (dot notation: `users.index`) |
 | `willow-forge make:migration <name>` | Create a timestamped migration pair |
 | `willow-forge make:auth` | Scaffold session-based HTML auth (web routes) |

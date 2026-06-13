@@ -1,4 +1,4 @@
-# Willow Forge — Framework Specification
+# Willow Forge  EFramework Specification
 
 ## Goal
 
@@ -43,15 +43,15 @@ Two crates in one workspace:
 
 ```text
 willow/
-├── src/                        ← willow-forge CLI binary
-│   ├── main.rs
-│   ├── commands/
-│   │   ├── make.rs
-│   │   ├── migrate.rs
-│   │   └── new.rs
-│   └── templates/
-│       └── app_files.rs        ← all generated file content
-└── runtime/                    ← willow-forge-runtime library
+├── src/                        ↁEwillow-forge CLI binary
+━E  ├── main.rs
+━E  ├── commands/
+━E  ━E  ├── make.rs
+━E  ━E  ├── migrate.rs
+━E  ━E  └── new.rs
+━E  └── templates/
+━E      └── app_files.rs        ↁEall generated file content
+└── runtime/                    ↁEwillow-forge-runtime library
     ├── Cargo.toml
     └── src/
         ├── lib.rs
@@ -81,50 +81,50 @@ The standard Rust module system (`mod.rs` files) is used throughout.
 ```text
 my-app/
 ├── src/
-│   ├── main.rs
-│   ├── middleware.rs
-│   ├── app/
-│   │   ├── mod.rs
-│   │   ├── Http/
-│   │   │   ├── mod.rs
-│   │   │   ├── Controllers/
-│   │   │   │   ├── mod.rs
-│   │   │   │   ├── HomeController.rs
-│   │   │   │   ├── UserController.rs
-│   │   │   │   └── StatusController.rs
-│   │   │   ├── Middleware/
-│   │   │   │   ├── mod.rs
-│   │   │   │   └── LogRequest.rs
-│   │   │   └── Requests/
-│   │   │       ├── mod.rs
-│   │   │       └── StoreUserRequest.rs
-│   │   ├── Models/
-│   │   │   ├── mod.rs
-│   │   │   └── User.rs
-│   │   └── Exceptions/
-│   │       ├── mod.rs
-│   │       └── Handler.rs
-│   └── routes/
-│       ├── mod.rs
-│       ├── web.rs
-│       └── api.rs
+━E  ├── main.rs
+━E  ├── middleware.rs
+━E  ├── app/
+━E  ━E  ├── mod.rs
+━E  ━E  ├── http/
+━E  ━E  ━E  ├── mod.rs
+━E  ━E  ━E  ├── controllers/
+━E  ━E  ━E  ━E  ├── mod.rs
+━E  ━E  ━E  ━E  ├── home_controller.rs
+━E  ━E  ━E  ━E  ├── user_controller.rs
+━E  ━E  ━E  ━E  └── status_controller.rs
+━E  ━E  ━E  ├── Middleware/
+━E  ━E  ━E  ━E  ├── mod.rs
+━E  ━E  ━E  ━E  └── log_request.rs
+━E  ━E  ━E  └── Requests/
+━E  ━E  ━E      ├── mod.rs
+━E  ━E  ━E      └── store_user_request.rs
+━E  ━E  ├── models/
+━E  ━E  ━E  ├── mod.rs
+━E  ━E  ━E  └── User.rs
+━E  ━E  └── exceptions/
+━E  ━E      ├── mod.rs
+━E  ━E      └── Handler.rs
+━E  └── routes/
+━E      ├── mod.rs
+━E      ├── web.rs
+━E      └── api.rs
 ├── bootstrap/
-│   ├── lib.rs                  ← library crate root; re-exports runtime symbols
-│   └── app_service_provider.rs ← DB pool + Redis cluster construction
+━E  ├── lib.rs                  ↁElibrary crate root; re-exports runtime symbols
+━E  └── app_service_provider.rs ↁEDB pool + Redis cluster construction
 ├── config/
-│   ├── app.toml
-│   ├── auth.toml
-│   ├── cache.toml
-│   └── database.toml
+━E  ├── app.toml
+━E  ├── auth.toml
+━E  ├── cache.toml
+━E  └── database.toml
 ├── database/
-│   └── migrations/
+━E  └── migrations/
 ├── resources/
-│   └── views/
-│       ├── layouts/app.jinja.html
-│       ├── errors/
-│       └── welcome.jinja.html
+━E  └── views/
+━E      ├── layouts/app.jinja.html
+━E      ├── errors/
+━E      └── welcome.jinja.html
 ├── docker/
-│   └── docker-compose.yml
+━E  └── docker-compose.yml
 ├── .env
 └── Cargo.toml
 ```
@@ -136,12 +136,12 @@ my-app/
 ### Module system rules
 
 - All Rust source files for the binary crate go under `src/`.
-- Controllers are in `src/app/Http/Controllers/`.
-- Models are in `src/app/Models/`.
+- Controllers are in `src/app/http/controllers/`.
+- Models are in `src/app/models/`.
 - Routes are in `src/routes/`.
 - Middleware wiring is in `src/middleware.rs`.
 - `#[path]` is **forbidden** everywhere. Use `mod.rs` files instead.
-- All `make:*` commands automatically append `pub mod Name;` to the relevant `mod.rs`.
+- All `make:*` commands automatically append `pub mod name;` to the relevant `mod.rs`.
 
 ### AppState and Context
 
@@ -171,18 +171,18 @@ pub async fn index(ctx: Context) -> Result<impl IntoResponse, AppError> {
 
 ### Routing
 
-Routes use `crate::app::Http::Controllers::*` imports — no `#[path]`:
+Routes use `crate::app::http::controllers::*` imports  Eno `#[path]`:
 
 ```rust
 // src/routes/web.rs
-use crate::app::Http::Controllers::HomeController;
+use crate::app::http::controllers::home_controller;
 use axum::{routing::get, Router};
 use std::sync::Arc;
 use my_app::AppState;
 
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/", get(HomeController::index))
+        .route("/", get(home_controller::index))
 }
 ```
 
@@ -272,8 +272,8 @@ impl Auth {
 
 Axum extractor that rejects unauthenticated requests:
 
-- Browser requests → 302 redirect to `/login`
-- API/AJAX requests → 401 JSON `{"message":"Unauthenticated."}`
+- Browser requests ↁE302 redirect to `/login`
+- API/AJAX requests ↁE401 JSON `{"message":"Unauthenticated."}`
 
 ### Jwt
 
@@ -340,17 +340,17 @@ On deserialisation failure (stale data), `Cache::get` evicts the key and returns
 
 Both variants:
 
-- Create `src/app/Http/Controllers/Auth/` with `LoginController.rs` and `RegisterController.rs`
-- Create `src/app/Http/Controllers/Auth/mod.rs`
-- Inject `pub mod Auth;` into `src/app/Http/Controllers/mod.rs`
+- Create `src/app/http/controllers/Auth/` with `login_controller.rs` and `register_controller.rs`
+- Create `src/app/http/controllers/Auth/mod.rs`
+- Inject `pub mod auth;` into `src/app/http/controllers/mod.rs`
 - Create users migration if none exists in `database/migrations/`
 - Inject routes into the appropriate routes file (no manual `mod` declarations needed)
 
 Session variant additionally creates:
 
-- `src/app/Http/Requests/login_request.rs` and `register_request.rs`
+- `src/app/http/requests/login_request.rs` and `register_request.rs`
 - `resources/views/auth/login.jinja.html` and `register.jinja.html`
-- Injects `pub mod login_request; pub mod register_request;` into `src/app/Http/Requests/mod.rs`
+- Injects `pub mod login_request; pub mod register_request;` into `src/app/http/requests/mod.rs`
 
 ---
 
@@ -359,8 +359,8 @@ Session variant additionally creates:
 - Rust 2024 edition
 - English only in all generated files, templates, comments, and user-facing text
 - No `#[path]` anywhere in generated code or the CLI itself
-- No unnecessary comments — only when the WHY is non-obvious
+- No unnecessary comments  Eonly when the WHY is non-obvious
 - `make:*` commands always update the relevant `mod.rs` automatically
-- Controllers use `crate::app::Models::Name::Name` to reference models
+- Controllers use `crate::app::models::name::Name` to reference models
 - Session auth uses `Form<T>` + manual `req.validate()` call; validation errors go to `flash_error` session key
 - JWT auth uses `ValidatedJson<T>`; validation errors return 422 JSON via `AppError`
