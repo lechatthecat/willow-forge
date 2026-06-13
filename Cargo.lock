@@ -2727,6 +2727,7 @@ dependencies = [
  "axum",
  "chrono",
  "cookie",
+ "hmac",
  "jsonwebtoken",
  "lettre",
  "minijinja",

@@ -1458,6 +1458,18 @@ mod tests {
         assert!(c.contains("pub async fn resend"));
         assert!(c.contains("services.mailer.send"));
     }
+    // 102b. verify links are signed + expiring (HMAC over id.hash.expires)
+    #[test]
+    fn ev_102b_signed_expiring_links() {
+        let c = af::make_auth_verify_email_controller("my_app");
+        // builds: signs the link with an expiry
+        assert!(c.contains("sign(&payload"));
+        assert!(c.contains("expires={}&signature={}"));
+        assert!(c.contains("VERIFY_TTL_MINUTES"));
+        // checks: rejects expired + tampered links
+        assert!(c.contains("Utc::now().timestamp() > query.expires"));
+        assert!(c.contains("verify_signature(&payload"));
+    }
     // 103. guard middleware checks the column and redirects unverified users
     #[test]
     fn ev_103_middleware_content() {

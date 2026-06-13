@@ -127,7 +127,8 @@ pub fn bootstrap_lib_rs() -> &'static str {
     r#"pub use willow_forge_runtime::{
     AppError, AppState, Auth, AuthUser, Cache, Config, Context, Email, Hash, Jwt, JwtUser,
     MailConfig, Mailer, RedisCluster, RedisConfig, Services, Session, ValidatedJson, ViewEngine,
-    authenticate, email_verification_hash, random_token, session_middleware, view,
+    authenticate, email_verification_hash, random_token, session_middleware, sign,
+    verify_signature, view,
 };
 
 mod app_service_provider;
@@ -1827,12 +1828,32 @@ fn unverified_response(parts: &Parts) -> Response {{
 pub fn make_auth_verify_email_controller(name: &str) -> String {
     format!(
         r#"use axum::{{
-    extract::Path,
+    extract::{{Path, Query}},
     response::{{IntoResponse, Redirect, Response}},
 }};
+use chrono::{{Duration, Utc}};
+use serde::Deserialize;
 
-use ::{name}::{{AppError, AuthUser, Context, Email, Session, email_verification_hash, view}};
+use ::{name}::{{
+    AppError, AuthUser, Context, Email, Session, email_verification_hash, sign, verify_signature,
+    view,
+}};
 use crate::app::models::user::User;
+
+/// How long a verification link stays valid, in minutes.
+const VERIFY_TTL_MINUTES: i64 = 60;
+
+/// Signing key for verification links. Reuses the app's JWT_SECRET.
+fn signing_key() -> String {{
+    std::env::var("JWT_SECRET").unwrap_or_default()
+}}
+
+/// Query parameters appended to a verification link: `?expires=..&signature=..`.
+#[derive(Deserialize)]
+pub struct VerifyQuery {{
+    pub expires: i64,
+    pub signature: String,
+}}
 
 /// GET /email/verify  Eprompt the user to verify their address.
 pub async fn notice(
@@ -1851,14 +1872,29 @@ pub async fn notice(
 pub async fn verify(
     ctx: Context,
     Path((id, hash)): Path<(i32, String)>,
+    Query(query): Query<VerifyQuery>,
 ) -> Response {{
+    let forbidden =
+        || (axum::http::StatusCode::FORBIDDEN, "Invalid or expired verification link.").into_response();
+
+    // Reject expired links.
+    if Utc::now().timestamp() > query.expires {{
+        return forbidden();
+    }}
+
+    // Reject tampered links: signature must match `id.hash.expires`.
+    let payload = format!("{{}}.{{}}.{{}}", id, hash, query.expires);
+    if !verify_signature(&payload, &query.signature, &signing_key()) {{
+        return forbidden();
+    }}
+
     let user = match User::find(&ctx.state.services.db, id).await {{
         Ok(Some(u)) => u,
-        _ => return (axum::http::StatusCode::FORBIDDEN, "Invalid verification link.").into_response(),
+        _ => return forbidden(),
     }};
 
     if email_verification_hash(&user.email) != hash {{
-        return (axum::http::StatusCode::FORBIDDEN, "Invalid verification link.").into_response();
+        return forbidden();
     }}
 
     if !user.is_verified() {{
@@ -1893,7 +1929,13 @@ pub async fn resend(
 pub async fn send_verification_email(ctx: &Context, user: &User) {{
     let base = std::env::var("APP_URL").unwrap_or_else(|_| "http://localhost:3000".to_string());
     let hash = email_verification_hash(&user.email);
-    let link = format!("{{}}/email/verify/{{}}/{{}}", base.trim_end_matches('/'), user.id, hash);
+    let expires = (Utc::now() + Duration::minutes(VERIFY_TTL_MINUTES)).timestamp();
+    let payload = format!("{{}}.{{}}.{{}}", user.id, hash, expires);
+    let signature = sign(&payload, &signing_key());
+    let link = format!(
+        "{{}}/email/verify/{{}}/{{}}?expires={{}}&signature={{}}",
+        base.trim_end_matches('/'), user.id, hash, expires, signature,
+    );
 
     let text = format!(
         "Welcome! Please confirm your email address by opening this link:\n{{}}\n",

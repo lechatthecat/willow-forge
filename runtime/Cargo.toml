@@ -25,6 +25,7 @@ cookie = "0.18"
 jsonwebtoken = "9"
 lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "builder", "hostname"] }
 sha2 = "0.10"
+hmac = "0.12"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
