@@ -12,6 +12,7 @@ pub mod mailer;
 pub mod session;
 pub mod session_middleware;
 pub mod support;
+pub mod throttle;
 pub mod validated_json;
 pub mod view;
 
@@ -29,5 +30,6 @@ pub use mailer::{Email, MailConfig, Mailer};
 pub use session::Session;
 pub use session_middleware::handle as session_middleware;
 pub use support::{email_verification_hash, random_token, sign, verify_signature};
+pub use throttle::Throttle;
 pub use validated_json::{ValidatedJson, ValidationError};
 pub use view::{view, HtmlView, ViewError};

@@ -126,8 +126,8 @@ async fn main() -> Result<()> {{
 pub fn bootstrap_lib_rs() -> &'static str {
     r#"pub use willow_forge_runtime::{
     AppError, AppState, Auth, AuthUser, Cache, Config, Context, Email, Hash, Jwt, JwtUser,
-    MailConfig, Mailer, RedisCluster, RedisConfig, Services, Session, ValidatedJson, ViewEngine,
-    authenticate, email_verification_hash, random_token, session_middleware, sign,
+    MailConfig, Mailer, RedisCluster, RedisConfig, Services, Session, Throttle, ValidatedJson,
+    ViewEngine, authenticate, email_verification_hash, random_token, session_middleware, sign,
     verify_signature, view,
 };
 
@@ -1483,11 +1483,16 @@ pub fn make_auth_forgot_password_controller(name: &str) -> String {
     response::{{IntoResponse, Redirect}},
 }};
 
-use ::{name}::{{AppError, Context, Email, Hash, Session, random_token, view}};
+use ::{name}::{{AppError, Context, Email, Hash, Session, Throttle, random_token, view}};
 use crate::app::http::requests::forgot_password_request::ForgotPasswordRequest;
 
 /// How long a password reset link stays valid, in minutes.
 const TOKEN_TTL_MINUTES: i64 = 60;
+
+/// Max reset requests allowed per email within the throttle window.
+const MAX_ATTEMPTS: u64 = 5;
+/// Throttle window, in seconds.
+const THROTTLE_WINDOW_SECS: i64 = 60;
 
 /// GET /forgot-password
 pub async fn show(ctx: Context, session: Session) -> Result<impl IntoResponse, AppError> {{
@@ -1521,6 +1526,17 @@ pub async fn store(
     // Same response whether or not the email exists, to avoid leaking which
     // addresses are registered.
     let neutral = "If that email address exists in our records, a password reset link has been sent.";
+
+    // Throttle per email so the endpoint can't be used to bomb an inbox. When
+    // the limit is hit, keep the neutral response and skip sending.
+    let throttle_key = format!("throttle:forgot-password:{{}}", req.email);
+    if Throttle::too_many(&ctx, &throttle_key, MAX_ATTEMPTS, THROTTLE_WINDOW_SECS)
+        .await
+        .unwrap_or(false)
+    {{
+        session.put("flash_status", neutral);
+        return Redirect::to("/forgot-password").into_response();
+    }}
 
     if let Ok(Some(_user)) =
         crate::app::models::user::User::find_by_email(&ctx.state.services.db, &req.email).await
@@ -1835,13 +1851,17 @@ use chrono::{{Duration, Utc}};
 use serde::Deserialize;
 
 use ::{name}::{{
-    AppError, AuthUser, Context, Email, Session, email_verification_hash, sign, verify_signature,
-    view,
+    AppError, AuthUser, Context, Email, Session, Throttle, email_verification_hash, sign,
+    verify_signature, view,
 }};
 use crate::app::models::user::User;
 
 /// How long a verification link stays valid, in minutes.
 const VERIFY_TTL_MINUTES: i64 = 60;
+/// Max resend requests allowed per user within the throttle window.
+const MAX_RESEND_ATTEMPTS: u64 = 3;
+/// Throttle window, in seconds.
+const RESEND_WINDOW_SECS: i64 = 60;
 
 /// Signing key for verification links. Reuses the app's JWT_SECRET.
 fn signing_key() -> String {{
@@ -1915,6 +1935,16 @@ pub async fn resend(
     ctx: Context,
     session: Session,
 ) -> impl IntoResponse {{
+    // Throttle per user so resend can't be used to bomb an inbox.
+    let throttle_key = format!("throttle:verify-resend:{{}}", auth.id);
+    if Throttle::too_many(&ctx, &throttle_key, MAX_RESEND_ATTEMPTS, RESEND_WINDOW_SECS)
+        .await
+        .unwrap_or(false)
+    {{
+        session.put("flash_status", "Please wait a moment before requesting another verification email.");
+        return Redirect::to("/email/verify");
+    }}
+
     if let Ok(Some(user)) = User::find(&ctx.state.services.db, auth.id as i32).await {{
         if !user.is_verified() {{
             send_verification_email(&ctx, &user).await;

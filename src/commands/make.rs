@@ -1513,6 +1513,23 @@ mod tests {
         assert!(c.contains("ensure_email_verified"));
     }
 
+    // ── rate limiting (willow-rwn) ─────────────────────────────────────────────
+
+    // 109. forgot-password is throttled per email
+    #[test]
+    fn th_109_forgot_password_throttled() {
+        let c = af::make_auth_forgot_password_controller("my_app");
+        assert!(c.contains("Throttle::too_many"));
+        assert!(c.contains("throttle:forgot-password:"));
+    }
+    // 110. verification resend is throttled per user
+    #[test]
+    fn th_110_resend_throttled() {
+        let c = af::make_auth_verify_email_controller("my_app");
+        assert!(c.contains("Throttle::too_many"));
+        assert!(c.contains("throttle:verify-resend:"));
+    }
+
     // ── combined / edge cases (15) ─────────────────────────────────────────────
 
     // 86. inject_mod_decl + inject_auth_into_routes both succeed
