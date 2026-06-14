@@ -876,9 +876,9 @@ docker compose -f src/docker/docker-compose.yml restart redis-cluster-init</code
         .then(data => {
             // DB status
             const dbOk = data.db;
-            document.getElementById('db-status').textContent = dbOk ? 'Connected ✁E : 'Not connected ✁E;
+            document.getElementById('db-status').textContent = dbOk ? 'Connected' : 'Not connected';
             const dbCls = dbOk ? 'badge-db-ok' : 'badge-db-off';
-            const dbLabel = dbOk ? 'DB  Econnected' : 'DB  Enot connected';
+            const dbLabel = dbOk ? 'DB connected' : 'DB not connected';
             ['db-badge-1', 'db-badge-2'].forEach(id => {
                 const el = document.getElementById(id);
                 el.className = 'badge ' + dbCls;
@@ -888,18 +888,18 @@ docker compose -f src/docker/docker-compose.yml restart redis-cluster-init</code
             // Redis status
             const redisOk = data.redis;
             const redisEl = document.getElementById('redis-status');
-            redisEl.textContent = redisOk ? 'Connected ✁E : 'Not connected ✁E;
+            redisEl.textContent = redisOk ? 'Connected' : 'Not connected';
             redisEl.style.color = redisOk ? '#0a3622' : '#58151c';
         })
         .catch(() => {
-            document.getElementById('db-status').textContent = 'Not connected ✁E;
+            document.getElementById('db-status').textContent = 'Not connected';
             ['db-badge-1', 'db-badge-2'].forEach(id => {
                 const el = document.getElementById(id);
                 el.className = 'badge badge-db-off';
-                el.textContent = 'DB  Enot connected';
+                el.textContent = 'DB not connected';
             });
             const redisEl = document.getElementById('redis-status');
-            redisEl.textContent = 'Not connected ✁E;
+            redisEl.textContent = 'Not connected';
             redisEl.style.color = '#58151c';
         });
 </script>
@@ -2731,6 +2731,16 @@ mod tests {
     fn main_rs_uses_crate_name_in_import() {
         let out = main_rs("my_app");
         assert!(out.contains("use ::my_app::{bootstrap, AppError}"));
+    }
+
+    #[test]
+    fn welcome_view_status_script_has_valid_status_strings() {
+        let out = view_welcome();
+        assert!(out.contains("dbOk ? 'Connected' : 'Not connected'"));
+        assert!(out.contains("redisOk ? 'Connected' : 'Not connected'"));
+        assert!(out.contains("textContent = 'Not connected';"));
+        assert!(!out.contains(&format!("Connected {}", "\u{2701}E")));
+        assert!(!out.contains(&format!("Not connected {}", "\u{2701}E")));
     }
 
     #[test]
