@@ -1,4 +1,4 @@
-# Willow Forge  EFramework Specification
+# Willow Forge - Framework Specification
 
 ## Goal
 
@@ -43,15 +43,15 @@ Two crates in one workspace:
 
 ```text
 willow/
-├── src/                        ↁEwillow-forge CLI binary
-━E  ├── main.rs
-━E  ├── commands/
-━E  ━E  ├── make.rs
-━E  ━E  ├── migrate.rs
-━E  ━E  └── new.rs
-━E  └── templates/
-━E      └── app_files.rs        ↁEall generated file content
-└── runtime/                    ↁEwillow-forge-runtime library
+├── src/                        -> willow-forge CLI binary
+│  ├── main.rs
+│  ├── commands/
+│  │  ├── make.rs
+│  │  ├── migrate.rs
+│  │  └── new.rs
+│  └── templates/
+│      └── app_files.rs        -> all generated file content
+└── runtime/                    -> willow-forge-runtime library
     ├── Cargo.toml
     └── src/
         ├── lib.rs
@@ -81,51 +81,51 @@ The standard Rust module system (`mod.rs` files) is used throughout.
 ```text
 my-app/
 ├── src/
-━E  ├── main.rs
-━E  ├── middleware.rs
-━E  ├── app/
-━E  ━E  ├── mod.rs
-━E  ━E  ├── http/
-━E  ━E  ━E  ├── mod.rs
-━E  ━E  ━E  ├── controllers/
-━E  ━E  ━E  ━E  ├── mod.rs
-━E  ━E  ━E  ━E  ├── home_controller.rs
-━E  ━E  ━E  ━E  ├── user_controller.rs
-━E  ━E  ━E  ━E  └── status_controller.rs
-━E  ━E  ━E  ├── Middleware/
-━E  ━E  ━E  ━E  ├── mod.rs
-━E  ━E  ━E  ━E  └── log_request.rs
-━E  ━E  ━E  └── Requests/
-━E  ━E  ━E      ├── mod.rs
-━E  ━E  ━E      └── store_user_request.rs
-━E  ━E  ├── models/
-━E  ━E  ━E  ├── mod.rs
-━E  ━E  ━E  └── User.rs
-━E  ━E  └── exceptions/
-━E  ━E      ├── mod.rs
-━E  ━E      └── Handler.rs
-━E  ├── routes/
-━E  ━E  ├── mod.rs
-━E  ━E  ├── web.rs
-━E  ━E  └── api.rs
-━E  ├── lib.rs                  ↁElibrary crate root; re-exports runtime symbols
-━E  ├── app_service_provider.rs ↁEDB pool + Redis cluster construction
-━E  ├── config/
-━E  ━E  ├── app.toml
-━E  ━E  ├── auth.toml
-━E  ━E  ├── cache.toml
-━E  ━E  ├── database.toml
-━E  ━E  ├── jwt.toml
-━E  ━E  └── mail.toml
-━E  ├── database/
-━E  ━E  └── migrations/
-━E  ├── resources/
-━E  ━E  └── views/
-━E  ━E      ├── layouts/app.jinja.html
-━E  ━E      ├── errors/
-━E  ━E      └── welcome.jinja.html
-━E  └── docker/
-━E     └── docker-compose.yml
+│  ├── main.rs
+│  ├── middleware.rs
+│  ├── app/
+│  │  ├── mod.rs
+│  │  ├── http/
+│  │  │  ├── mod.rs
+│  │  │  ├── controllers/
+│  │  │  │  ├── mod.rs
+│  │  │  │  ├── home_controller.rs
+│  │  │  │  ├── user_controller.rs
+│  │  │  │  └── status_controller.rs
+│  │  │  ├── Middleware/
+│  │  │  │  ├── mod.rs
+│  │  │  │  └── log_request.rs
+│  │  │  └── Requests/
+│  │  │      ├── mod.rs
+│  │  │      └── store_user_request.rs
+│  │  ├── models/
+│  │  │  ├── mod.rs
+│  │  │  └── User.rs
+│  │  └── exceptions/
+│  │      ├── mod.rs
+│  │      └── Handler.rs
+│  ├── routes/
+│  │  ├── mod.rs
+│  │  ├── web.rs
+│  │  └── api.rs
+│  ├── lib.rs                  -> library crate root; re-exports runtime symbols
+│  ├── app_service_provider.rs -> DB pool + Redis cluster construction
+│  ├── config/
+│  │  ├── app.toml
+│  │  ├── auth.toml
+│  │  ├── cache.toml
+│  │  ├── database.toml
+│  │  ├── jwt.toml
+│  │  └── mail.toml
+│  ├── database/
+│  │  └── migrations/
+│  ├── resources/
+│  │  └── views/
+│  │      ├── layouts/app.jinja.html
+│  │      ├── errors/
+│  │      └── welcome.jinja.html
+│  └── docker/
+│     └── docker-compose.yml
 ├── .env
 └── Cargo.toml
 ```
@@ -173,7 +173,7 @@ pub async fn index(ctx: Context) -> Result<impl IntoResponse, AppError> {
 
 ### Routing
 
-Routes use `crate::app::http::controllers::*` imports  Eno `#[path]`:
+Routes use `crate::app::http::controllers::*` imports - no `#[path]`:
 
 ```rust
 // src/routes/web.rs
@@ -274,8 +274,8 @@ impl Auth {
 
 Axum extractor that rejects unauthenticated requests:
 
-- Browser requests ↁE302 redirect to `/login`
-- API/AJAX requests ↁE401 JSON `{"message":"Unauthenticated."}`
+- Browser requests -> 302 redirect to `/login`
+- API/AJAX requests -> 401 JSON `{"message":"Unauthenticated."}`
 
 ### Jwt
 
@@ -361,7 +361,7 @@ Session variant additionally creates:
 - Rust 2024 edition
 - English only in all generated files, templates, comments, and user-facing text
 - No `#[path]` anywhere in generated code or the CLI itself
-- No unnecessary comments  Eonly when the WHY is non-obvious
+- No unnecessary comments - only when the WHY is non-obvious
 - `make:*` commands always update the relevant `mod.rs` automatically
 - Controllers use `crate::app::models::name::Name` to reference models
 - Session auth uses `Form<T>` + manual `req.validate()` call; validation errors go to `flash_error` session key

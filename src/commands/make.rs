@@ -886,7 +886,7 @@ mod tests {
 
     // ── inject_mod_decl (25) ───────────────────────────────────────────────────
 
-    // 1. empty file ↁEdecl added
+    // 1. empty file -> decl added
     #[test]
     fn imd_01_empty_file_adds_decl() {
         let d = tmp(); let f = d.path().join("mod.rs");
@@ -894,7 +894,7 @@ mod tests {
         inject_mod_decl(f.to_str().unwrap(), "foo").unwrap();
         assert!(fs::read_to_string(&f).unwrap().contains("pub mod foo;"));
     }
-    // 2. non-empty file, absent ↁEappended
+    // 2. non-empty file, absent -> appended
     #[test]
     fn imd_02_appends_when_absent() {
         let d = tmp(); let f = d.path().join("mod.rs");
@@ -903,7 +903,7 @@ mod tests {
         let c = fs::read_to_string(&f).unwrap();
         assert!(c.contains("pub mod foo;") && c.contains("pub mod bar;"));
     }
-    // 3. already present ↁEno change
+    // 3. already present -> no change
     #[test]
     fn imd_03_no_op_when_present() {
         let d = tmp(); let f = d.path().join("mod.rs");
@@ -911,14 +911,14 @@ mod tests {
         inject_mod_decl(f.to_str().unwrap(), "foo").unwrap();
         assert_eq!(fs::read_to_string(&f).unwrap().matches("pub mod foo;").count(), 1);
     }
-    // 4. missing file ↁEOk, no file created
+    // 4. missing file -> Ok, no file created
     #[test]
     fn imd_04_missing_file_ok() {
         let d = tmp(); let f = d.path().join("nope.rs");
         assert!(inject_mod_decl(f.to_str().unwrap(), "foo").is_ok());
         assert!(!f.exists());
     }
-    // 5. two calls same module ↁEexactly one occurrence
+    // 5. two calls same module -> exactly one occurrence
     #[test]
     fn imd_05_two_calls_no_duplicate() {
         let d = tmp(); let f = d.path().join("mod.rs");
@@ -927,7 +927,7 @@ mod tests {
         inject_mod_decl(f.to_str().unwrap(), "foo").unwrap();
         assert_eq!(fs::read_to_string(&f).unwrap().matches("pub mod foo;").count(), 1);
     }
-    // 6. five calls same module ↁEstill one
+    // 6. five calls same module -> still one
     #[test]
     fn imd_06_five_calls_no_duplicate() {
         let d = tmp(); let f = d.path().join("mod.rs");
@@ -935,7 +935,7 @@ mod tests {
         for _ in 0..5 { inject_mod_decl(f.to_str().unwrap(), "foo").unwrap(); }
         assert_eq!(fs::read_to_string(&f).unwrap().matches("pub mod foo;").count(), 1);
     }
-    // 7. two different modules ↁEboth present
+    // 7. two different modules -> both present
     #[test]
     fn imd_07_two_different_both_added() {
         let d = tmp(); let f = d.path().join("mod.rs");
@@ -995,7 +995,7 @@ mod tests {
         inject_mod_decl(f.to_str().unwrap(), "ApiRegisterController").unwrap();
         assert!(fs::read_to_string(&f).unwrap().contains("pub mod api_register_controller;"));
     }
-    // 14. name is prefix of existing ↁEboth distinct
+    // 14. name is prefix of existing -> both distinct
     #[test]
     fn imd_14_prefix_of_existing_both_present() {
         let d = tmp(); let f = d.path().join("mod.rs");
@@ -1004,7 +1004,7 @@ mod tests {
         let c = fs::read_to_string(&f).unwrap();
         assert!(c.contains("pub mod log_request;") && c.contains("pub mod log;"));
     }
-    // 15. existing is prefix of new ↁEboth distinct
+    // 15. existing is prefix of new -> both distinct
     #[test]
     fn imd_15_existing_is_prefix_of_new() {
         let d = tmp(); let f = d.path().join("mod.rs");
@@ -1013,7 +1013,7 @@ mod tests {
         let c = fs::read_to_string(&f).unwrap();
         assert!(c.contains("pub mod log;") && c.contains("pub mod log_request;"));
     }
-    // 16. multiple existing ↁEnew appended
+    // 16. multiple existing -> new appended
     #[test]
     fn imd_16_multiple_existing_appends_new() {
         let d = tmp(); let f = d.path().join("mod.rs");
@@ -1022,7 +1022,7 @@ mod tests {
         let c = fs::read_to_string(&f).unwrap();
         for m in &["a", "b", "c", "d"] { assert!(c.contains(&format!("pub mod {};", to_snake_case(m)))); }
     }
-    // 17. duplicate of first in multiple ↁEnot duplicated
+    // 17. duplicate of first in multiple -> not duplicated
     #[test]
     fn imd_17_no_dup_first_in_multiple() {
         let d = tmp(); let f = d.path().join("mod.rs");
@@ -1030,7 +1030,7 @@ mod tests {
         inject_mod_decl(f.to_str().unwrap(), "a").unwrap();
         assert_eq!(fs::read_to_string(&f).unwrap().matches("pub mod a;").count(), 1);
     }
-    // 18. duplicate of last in multiple ↁEnot duplicated
+    // 18. duplicate of last in multiple -> not duplicated
     #[test]
     fn imd_18_no_dup_last_in_multiple() {
         let d = tmp(); let f = d.path().join("mod.rs");
@@ -1038,7 +1038,7 @@ mod tests {
         inject_mod_decl(f.to_str().unwrap(), "c").unwrap();
         assert_eq!(fs::read_to_string(&f).unwrap().matches("pub mod c;").count(), 1);
     }
-    // 19. file without trailing newline ↁEinjection still works
+    // 19. file without trailing newline -> injection still works
     #[test]
     fn imd_19_no_trailing_newline() {
         let d = tmp(); let f = d.path().join("mod.rs");
@@ -1054,7 +1054,7 @@ mod tests {
         inject_mod_decl(f.to_str().unwrap(), "foo").unwrap();
         assert!(fs::read_to_string(&f).unwrap().ends_with('\n'));
     }
-    // 21. whitespace-only file ↁEdecl added
+    // 21. whitespace-only file -> decl added
     #[test]
     fn imd_21_whitespace_only_file() {
         let d = tmp(); let f = d.path().join("mod.rs");
@@ -1069,7 +1069,7 @@ mod tests {
         fs::write(&f, "").unwrap();
         assert!(inject_mod_decl(f.to_str().unwrap(), "foo").is_ok());
     }
-    // 23. three modules in sequence ↁEeach exactly once
+    // 23. three modules in sequence -> each exactly once
     #[test]
     fn imd_23_three_modules_each_once() {
         let d = tmp(); let f = d.path().join("mod.rs");
@@ -1089,7 +1089,7 @@ mod tests {
             assert_eq!(c.matches(&format!("pub mod {};", to_snake_case(m))).count(), 1, "{} must appear once", m);
         }
     }
-    // 25. inject login_request then register_request ↁEboth in Requests/mod.rs
+    // 25. inject login_request then register_request -> both in Requests/mod.rs
     #[test]
     fn imd_25_login_and_register_request_both_present() {
         let d = tmp(); let f = d.path().join("mod.rs");
@@ -1100,7 +1100,7 @@ mod tests {
         assert!(c.contains("pub mod login_request;") && c.contains("pub mod register_request;"));
     }
 
-    // ── inject_auth_into_routes  EAPI (35) ────────────────────────────────────
+    // ── inject_auth_into_routes  - API (35) ────────────────────────────────────
 
     // 26. /api/auth/login injected
     #[test]
@@ -1174,7 +1174,7 @@ mod tests {
         fs::write(&f, api_content()).unwrap(); inject_api(&f);
         assert!(!fs::read_to_string(&f).unwrap().contains("#[path"));
     }
-    // 36. routing::get, ↁErouting::{get, post},
+    // 36. routing::get, -> routing::{get, post},
     #[test]
     fn api_36_routing_get_comma_replaced() {
         let d = tmp(); let f = d.path().join("api.rs");
@@ -1188,7 +1188,7 @@ mod tests {
         fs::write(&f, api_content()).unwrap(); inject_api(&f);
         assert!(!fs::read_to_string(&f).unwrap().contains("routing::get,"));
     }
-    // 38. already has routing::{get, post} ↁEnot doubled
+    // 38. already has routing::{get, post} -> not doubled
     #[test]
     fn api_38_already_has_get_post_not_doubled() {
         let d = tmp(); let f = d.path().join("api.rs");
@@ -1196,7 +1196,7 @@ mod tests {
         fs::write(&f, &c).unwrap(); inject_api(&f);
         assert_eq!(fs::read_to_string(&f).unwrap().matches("routing::{get, post}").count(), 1);
     }
-    // 39. routing::get} ↁErouting::{get, post}}
+    // 39. routing::get} -> routing::{get, post}}
     #[test]
     fn api_39_routing_get_brace_replaced() {
         let d = tmp(); let f = d.path().join("api.rs");
@@ -1239,7 +1239,7 @@ mod tests {
         fs::write(&f, api_content()).unwrap(); inject_api(&f); inject_api(&f);
         assert_eq!(fs::read_to_string(&f).unwrap().matches("api_login_controller, api_register_controller").count(), 1);
     }
-    // 45. five calls ↁEeach route still exactly once
+    // 45. five calls -> each route still exactly once
     #[test]
     fn api_45_five_calls_each_once() {
         let d = tmp(); let f = d.path().join("api.rs");
@@ -1259,21 +1259,21 @@ mod tests {
             assert_eq!(c.matches(route).count(), 1, "{} must appear exactly once", route);
         }
     }
-    // 46. missing file ↁEOk, not created
+    // 46. missing file -> Ok, not created
     #[test]
     fn api_46_missing_file_ok() {
         let d = tmp(); let f = d.path().join("nope.rs");
         assert!(inject_auth_into_routes(f.to_str().unwrap(), api_use(), api_routes()).is_ok());
         assert!(!f.exists());
     }
-    // 47. no pub fn routes ↁEErr
+    // 47. no pub fn routes -> Err
     #[test]
     fn api_47_no_pub_fn_routes_err() {
         let d = tmp(); let f = d.path().join("api.rs");
         fs::write(&f, "use axum::Router;\nfn not_routes() {}\n").unwrap();
         assert!(inject_auth_into_routes(f.to_str().unwrap(), api_use(), api_routes()).is_err());
     }
-    // 48. no closing brace ↁEErr
+    // 48. no closing brace -> Err
     #[test]
     fn api_48_no_closing_brace_err() {
         let d = tmp(); let f = d.path().join("api.rs");
@@ -1350,7 +1350,7 @@ mod tests {
         fs::write(&f, api_content()).unwrap(); inject_api(&f);
         assert!(fs::read_to_string(&f).unwrap().contains("post(api_login_controller::store)"));
     }
-    // 58. no routing import at all ↁEno crash, routes added
+    // 58. no routing import at all -> no crash, routes added
     #[test]
     fn api_58_no_routing_import_no_crash() {
         let d = tmp(); let f = d.path().join("api.rs");
@@ -1358,7 +1358,7 @@ mod tests {
         fs::write(&f, c).unwrap(); inject_api(&f);
         assert!(fs::read_to_string(&f).unwrap().contains("/api/auth/login"));
     }
-    // 59. empty routes body ↁEroutes added
+    // 59. empty routes body -> routes added
     #[test]
     fn api_59_empty_routes_body() {
         let d = tmp(); let f = d.path().join("api.rs");
@@ -1366,7 +1366,7 @@ mod tests {
         fs::write(&f, c).unwrap(); inject_api(&f);
         assert!(fs::read_to_string(&f).unwrap().contains("/api/auth/login"));
     }
-    // 60. realistic api.rs (like demo) ↁEall auth routes injected, all existing preserved
+    // 60. realistic api.rs (like demo) -> all auth routes injected, all existing preserved
     #[test]
     fn api_60_realistic_api_rs() {
         let d = tmp(); let f = d.path().join("api.rs");
@@ -1421,7 +1421,7 @@ mod tests {
         }
     }
 
-    // ── inject_auth_into_routes  Eweb (25) ────────────────────────────────────
+    // ── inject_auth_into_routes  - web (25) ────────────────────────────────────
 
     // 61. /login GET injected
     #[test]
@@ -1474,7 +1474,7 @@ mod tests {
         fs::write(&f, web_content()).unwrap(); inject_web(&f);
         assert!(fs::read_to_string(&f).unwrap().contains("register_controller"));
     }
-    // 68. routing::get, ↁErouting::{get, post},
+    // 68. routing::get, -> routing::{get, post},
     #[test]
     fn web_68_routing_replaced() {
         let d = tmp(); let f = d.path().join("web.rs");
@@ -1531,13 +1531,13 @@ mod tests {
         fs::write(&f, web_content()).unwrap(); inject_web(&f);
         assert!(!fs::read_to_string(&f).unwrap().contains("#[path"));
     }
-    // 76. missing file ↁEOk
+    // 76. missing file -> Ok
     #[test]
     fn web_76_missing_file_ok() {
         let d = tmp(); let f = d.path().join("web.rs");
         assert!(inject_auth_into_routes(f.to_str().unwrap(), web_use(), web_routes()).is_ok());
     }
-    // 77. no pub fn routes ↁEErr
+    // 77. no pub fn routes -> Err
     #[test]
     fn web_77_no_pub_fn_routes_err() {
         let d = tmp(); let f = d.path().join("web.rs");
@@ -1559,7 +1559,7 @@ mod tests {
         fs::write(&f, web_content()).unwrap(); inject_web(&f);
         assert!(fs::read_to_string(&f).unwrap().contains("login_controller::destroy"));
     }
-    // 80. five calls ↁE/login exactly once
+    // 80. five calls -> /login exactly once
     #[test]
     fn web_80_five_calls_login_once() {
         let d = tmp(); let f = d.path().join("web.rs");
@@ -1928,7 +1928,7 @@ mod tests {
         assert!(c.contains("/api/auth/login"));
         assert!(c.trim_end().ends_with('}'));
     }
-    // 95. inject Auth mod twice ↁEstill once
+    // 95. inject Auth mod twice -> still once
     #[test]
     fn cmb_95_inject_auth_mod_twice_once() {
         let d = tmp(); let f = d.path().join("mod.rs");
@@ -1975,7 +1975,7 @@ mod tests {
         assert!(fs::read_to_string(&mod_f).unwrap().contains("pub mod auth;"));
         assert!(fs::read_to_string(&web_f).unwrap().contains("\"/login\""));
     }
-    // 100. full round-trip: fresh files ↁEinject API ↁEinject again ↁEeach element exactly once
+    // 100. full round-trip: fresh files -> inject API -> inject again -> each element exactly once
     #[test]
     fn cmb_100_full_round_trip_api_idempotent() {
         let d = tmp(); let f = d.path().join("api.rs");
@@ -1989,7 +1989,7 @@ mod tests {
         assert_eq!(c.matches("routing::{get, post}").count(), 1, "routing import must appear exactly once");
     }
 
-    // ── controller_content  E10 tests ─────────────────────────────────────────
+    // ── controller_content  - 10 tests ─────────────────────────────────────────
 
     #[test]
     fn ctrl_01_all_five_messages_contain_name() {
@@ -2072,7 +2072,7 @@ mod tests {
         assert_ne!(controller_content("FooController"), controller_content("BarController"));
     }
 
-    // ── request_content  E10 tests ────────────────────────────────────────────
+    // ── request_content  - 10 tests ────────────────────────────────────────────
 
     #[test]
     fn req_01_has_pub_struct_with_name() {
@@ -2125,7 +2125,7 @@ mod tests {
         assert_ne!(request_content("LoginRequest"), request_content("RegisterRequest"));
     }
 
-    // ── model_content  E10 tests ──────────────────────────────────────────────
+    // ── model_content  - 10 tests ──────────────────────────────────────────────
 
     #[test]
     fn mdl_01_has_pub_struct_with_name() {
@@ -2178,7 +2178,7 @@ mod tests {
         assert_ne!(model_content("User"), model_content("Post"));
     }
 
-    // ── view_template_content  E10 tests ──────────────────────────────────────
+    // ── view_template_content  - 10 tests ──────────────────────────────────────
 
     #[test]
     fn view_tpl_01_extends_layouts_app() {
@@ -2235,7 +2235,7 @@ mod tests {
         assert!(!out.chars().any(|c| ('\u{3040}'..='\u{9FFF}').contains(&c)));
     }
 
-    // ── migration content  E10 tests ──────────────────────────────────────────
+    // ── migration content  - 10 tests ──────────────────────────────────────────
 
     #[test]
     fn mig_01_up_contains_migration_comment_with_name() {
@@ -3076,7 +3076,7 @@ mod tests {
         });
     }
 
-    // ── Multi-command: controller ↁEauth (web) ────────────────────────────────
+    // ── Multi-command: controller -> auth (web) ────────────────────────────────
 
     #[test]
     fn int_09_controller_then_auth_web() {
@@ -3112,7 +3112,7 @@ mod tests {
         });
     }
 
-    // ── Multi-command: auth (web) ↁEcontroller ────────────────────────────────
+    // ── Multi-command: auth (web) -> controller ────────────────────────────────
 
     #[test]
     fn int_10_auth_web_then_controller() {
@@ -3136,7 +3136,7 @@ mod tests {
         });
     }
 
-    // ── Multi-command: request ↁEmodel ↁEcontroller ───────────────────────────
+    // ── Multi-command: request -> model -> controller ───────────────────────────
 
     #[test]
     fn int_11_request_then_model_then_controller() {
@@ -3172,7 +3172,7 @@ mod tests {
         });
     }
 
-    // ── Multi-command: controller ↁEmigration ↁEauth (api) ───────────────────
+    // ── Multi-command: controller -> migration -> auth (api) ───────────────────
 
     #[test]
     fn int_12_controller_then_migration_then_auth_api() {
@@ -3207,7 +3207,7 @@ mod tests {
         });
     }
 
-    // ── Multi-command: auth (api) ↁEcontroller ↁErequest ↁEmodel ─────────────
+    // ── Multi-command: auth (api) -> controller -> request -> model ─────────────
 
     #[test]
     fn int_13_auth_api_then_controller_then_request_then_model() {
@@ -3250,7 +3250,7 @@ mod tests {
         });
     }
 
-    // ── Multi-command: view ↁEmiddleware ↁEauth (web) ─────────────────────────
+    // ── Multi-command: view -> middleware -> auth (web) ─────────────────────────
 
     #[test]
     fn int_14_view_then_middleware_then_auth_web() {
@@ -3287,8 +3287,8 @@ mod tests {
 
     #[test]
     fn int_15_reversed_order_same_final_state() {
-        // Forward: controller ↁErequest ↁEmodel ↁEauth(web)
-        // Reversed: auth(web) ↁEmodel ↁErequest ↁEcontroller
+        // Forward: controller -> request -> model -> auth(web)
+        // Reversed: auth(web) -> model -> request -> controller
         // Final Controllers mod.rs state must include the same entries either way.
 
         with_app(|| {
@@ -3373,7 +3373,7 @@ mod tests {
             let mod_snap  = read_file("src/app/http/controllers/mod.rs");
             let req_snap  = read_file("src/app/http/requests/mod.rs");
 
-            // Second call: files exist ↁEskips files, routes already present ↁEskips injection
+            // Second call: files exist -> skips files, routes already present -> skips injection
             auth(false)?;
 
             assert_eq!(read_file("src/routes/web.rs"), web_snap,
@@ -3553,7 +3553,7 @@ mod tests {
             assert_eq!(products.len(), 2, "expected up+down for create_products_table");
             assert_eq!(reviews.len(),  2, "expected up+down for create_reviews_table");
 
-            // Each migration has its own prefix  Eno file is shared
+            // Each migration has its own prefix  - no file is shared
             let order_names:   Vec<_> = orders.iter().map(|p| p.file_name().unwrap().to_string_lossy().to_string()).collect();
             let product_names: Vec<_> = products.iter().map(|p| p.file_name().unwrap().to_string_lossy().to_string()).collect();
             for name in &order_names {

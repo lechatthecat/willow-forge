@@ -223,7 +223,7 @@ use ::{name}::AppState;
 /// Checks:
 /// - Path starts with `/api/` (API routes always return JSON)
 /// - OR Accept header contains `application/json`, `/json`, or `+json`
-/// - OR Content-Type: application/json (client is sending JSON ↁEexpects JSON back)
+/// - OR Content-Type: application/json (client is sending JSON -> expects JSON back)
 /// - OR the request is an AJAX call (X-Requested-With: XMLHttpRequest) with Accept: */* or absent
 fn expects_json(request: &Request) -> bool {{
     // API routes always return JSON regardless of Accept header
@@ -250,7 +250,7 @@ fn expects_json(request: &Request) -> bool {{
         .map(|ct| ct.contains("application/json"))
         .unwrap_or(false);
 
-    // ajax()  EX-Requested-With: XMLHttpRequest
+    // ajax() - X-Requested-With: XMLHttpRequest
     let is_ajax = request
         .headers()
         .get("x-requested-with")
@@ -258,13 +258,13 @@ fn expects_json(request: &Request) -> bool {{
         .map(|v| v.eq_ignore_ascii_case("xmlhttprequest"))
         .unwrap_or(false);
 
-    // acceptsAnyContentType()  EAccept: */* or header absent
+    // acceptsAnyContentType() - Accept: */* or header absent
     let accepts_any = accept.is_empty() || accept.contains("*/*");
 
     wants_json || sends_json || (is_ajax && accepts_any)
 }}
 
-/// Exception handler  Eintercepts error responses and renders HTML error views when available.
+/// Exception handler - intercepts error responses and renders HTML error views when available.
 ///
 /// How it works:
 /// - Runs on every response (as the outermost layer in main.rs)
@@ -325,12 +325,12 @@ pub async fn render(
 pub fn view_error_404_html() -> &'static str {
     r#"{% extends "layouts.app" %}
 
-{% block title %}404  ENot Found | {{ app_name }}{% endblock %}
+{% block title %}404 - Not Found | {{ app_name }}{% endblock %}
 
 {% block content %}
 <h1>{{ code }}</h1>
 <p>{{ message }}</p>
-<p><a href="/">ↁEBack to home</a></p>
+<p><a href="/">&lt;- Back to home</a></p>
 {% endblock %}
 "#
 }
@@ -338,7 +338,7 @@ pub fn view_error_404_html() -> &'static str {
 pub fn view_error_500_html() -> &'static str {
     r#"{% extends "layouts.app" %}
 
-{% block title %}500  EServer Error | {{ app_name }}{% endblock %}
+{% block title %}500 - Server Error | {{ app_name }}{% endblock %}
 
 {% block content %}
 <h1>{{ code }}</h1>
@@ -350,7 +350,7 @@ pub fn view_error_500_html() -> &'static str {
 pub fn view_error_generic_html() -> &'static str {
     r#"{% extends "layouts.app" %}
 
-{% block title %}{{ code }}  E{{ message }} | {{ app_name }}{% endblock %}
+{% block title %}{{ code }} - {{ message }} | {{ app_name }}{% endblock %}
 
 {% block content %}
 <h1>{{ code }}</h1>
@@ -384,7 +384,7 @@ pub fn create_pool(config: &DatabaseConfig) -> Result<PgPool> {
 
 /// Build a Redis cluster client from a list of node URLs.
 ///
-/// Only validates config syntax  Eno actual connection is made here.
+/// Only validates config syntax - no actual connection is made here.
 /// If the cluster is down the app still starts; Redis endpoints will fail gracefully.
 pub fn create_redis_cluster(nodes: &[String]) -> Result<Arc<ClusterClient>> {
     let client = ClusterClient::new(nodes.iter().map(|s| s.as_str()).collect::<Vec<_>>())
@@ -479,10 +479,10 @@ use crate::app::models::user::User;
 //
 // --- Automatic conversion via ? ---
 //
-//   sqlx::Error     ↁEAppError::Database    (via #[from])
-//   ViewError       ↁEAppError::View        (via #[from])
-//   ValidationError ↁEAppError::Validation  (via #[from])
-//   redis::RedisError ↁEAppError::Redis     (via #[from])
+//   sqlx::Error     -> AppError::Database    (via #[from])
+//   ViewError       -> AppError::View        (via #[from])
+//   ValidationError -> AppError::Validation  (via #[from])
+//   redis::RedisError -> AppError::Redis     (via #[from])
 //
 //   let users = sqlx::query_as::<_, User>(...).fetch_all(pool).await?;
 //   // sqlx::Error is automatically converted to AppError::Database
@@ -593,7 +593,7 @@ use serde_json::json;
 use ::{name}::Context;
 
 pub async fn index(ctx: Context) -> impl IntoResponse {{
-    // Both checks run concurrently  Eneither blocks the other.
+    // Both checks run concurrently - neither blocks the other.
     let (db, redis) = tokio::join!(
         check_db(&ctx),
         check_redis(&ctx),
@@ -689,7 +689,7 @@ pub fn view_layout_app() -> &'static str {
 pub fn view_welcome() -> &'static str {
     r#"{% extends "layouts.app" %}
 
-{% block title %}Welcome  E{{ app_name }}{% endblock %}
+{% block title %}Welcome - {{ app_name }}{% endblock %}
 
 {% block content %}
 <h1>Welcome to {{ app_name }}</h1>
@@ -771,17 +771,17 @@ pub fn view_welcome() -> &'static str {
 
 <h2>API Examples</h2>
 
-<h3>POST /api/users  Esuccess</h3>
+<h3>POST /api/users - success</h3>
 <pre><code>curl -s -X POST http://localhost:3000/api/users \
   -H "Content-Type: application/json" \
   -d '{"name":"Alice","email":"alice@example.com","password":"secret123"}' | jq</code></pre>
 
-<h3>POST /api/users  Evalidation error (422)</h3>
+<h3>POST /api/users - validation error (422)</h3>
 <pre><code>curl -s -X POST http://localhost:3000/api/users \
   -H "Content-Type: application/json" \
   -d '{"name":"","email":"not-an-email","password":"short"}' | jq</code></pre>
 
-<h3>POST /api/users  Emalformed JSON (400)</h3>
+<h3>POST /api/users - malformed JSON (400)</h3>
 <pre><code>curl -s -X POST http://localhost:3000/api/users \
   -H "Content-Type: application/json" \
   -d 'invalid' | jq</code></pre>
@@ -1055,7 +1055,7 @@ use std::sync::Arc;
 
 use ::{name}::{{AppState, session_middleware}};
 
-/// Global middleware  Eruns on every request.
+/// Global middleware - runs on every request.
 pub fn global(state: Arc<AppState>, router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {{
     let sess = Arc::clone(&state);
     router
@@ -1066,14 +1066,14 @@ pub fn global(state: Arc<AppState>, router: Router<Arc<AppState>>) -> Router<Arc
         }}))
 }}
 
-/// Web middleware  Eruns only on HTML routes (src/routes/web.rs).
+/// Web middleware - runs only on HTML routes (src/routes/web.rs).
 pub fn web(router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {{
     router
     // Protect all web routes with auth:
     // .layer(middleware::from_fn(::{name}::authenticate))
 }}
 
-/// API middleware  Eruns only on API routes (src/routes/api.rs).
+/// API middleware - runs only on API routes (src/routes/api.rs).
 pub fn api(router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {{
     router
 }}
@@ -1094,7 +1094,7 @@ pub async fn handle(request: Request, next: Next) -> Response {
     let response = next.run(request).await;
 
     tracing::info!(
-        "{} {} ↁE{} ({:?})",
+        "{} {} -> {} ({:?})",
         method,
         uri,
         response.status(),
@@ -1424,7 +1424,7 @@ pub fn make_auth_dashboard_controller(name: &str) -> String {
 use ::{name}::{{AppError, Context, view}};
 use crate::app::http::middleware::ensure_email_verified::VerifiedUser;
 
-/// GET /dashboard  Erequires session login
+/// GET /dashboard - requires session login
 pub async fn index(user: VerifiedUser, ctx: Context) -> Result<impl IntoResponse, AppError> {{
     Ok(view(&ctx, "dashboard", minijinja::context! {{ user_id => user.id }})?)
 }}
@@ -2439,7 +2439,7 @@ pub async fn destroy(
     Ok(Json(json!({{"message": "Logged out"}})))
 }}
 
-/// GET /api/me  Ereturns the authenticated user's ID
+/// GET /api/me - returns the authenticated user's ID
 pub async fn me(auth: JwtUser) -> impl IntoResponse {{
     Json(json!({{"user_id": auth.id}}))
 }}
@@ -2938,7 +2938,7 @@ mod tests {
             "ApiLoginController must have destroy() for POST /api/auth/logout");
     }
 
-    // Invariant: no template may use #[path]  Eit is permanently banned
+    // Invariant: no template may use #[path] - it is permanently banned
     #[test]
     fn no_template_uses_path_attribute() {
         let cases: &[(&str, &str)] = &[
@@ -3893,7 +3893,7 @@ mod tests {
     fn arc_10_response_includes_token() {
         assert!(make_auth_api_register_controller("my_app").contains("\"token\""));
     }
-    // arc_11. behavior: email duplicate ↁEConflict with message
+    // arc_11. behavior: email duplicate -> Conflict with message
     #[test]
     fn arc_11_email_duplicate_is_conflict() {
         let out = make_auth_api_register_controller("my_app");

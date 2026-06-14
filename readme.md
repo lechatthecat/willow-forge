@@ -35,60 +35,60 @@ cargo run --manifest-path /path/to/willow/Cargo.toml -- new my-app
 ```text
 my-app/
 ├── src/
-━E  ├── main.rs
-━E  ├── middleware.rs               ↁEglobal / api / web middleware groups
-━E  ├── app/
-━E  ━E  ├── mod.rs
-━E  ━E  ├── http/
-━E  ━E  ━E  ├── mod.rs
-━E  ━E  ━E  ├── controllers/
-━E  ━E  ━E  ━E  ├── mod.rs
-━E  ━E  ━E  ━E  ├── home_controller.rs
-━E  ━E  ━E  ━E  ├── user_controller.rs
-━E  ━E  ━E  ━E  └── status_controller.rs
-━E  ━E  ━E  ├── Middleware/
-━E  ━E  ━E  ━E  ├── mod.rs
-━E  ━E  ━E  ━E  └── log_request.rs
-━E  ━E  ━E  └── Requests/
-━E  ━E  ━E      ├── mod.rs
-━E  ━E  ━E      └── store_user_request.rs
-━E  ━E  ├── models/
-━E  ━E  ━E  ├── mod.rs
-━E  ━E  ━E  └── User.rs
-━E  ━E  └── exceptions/
-━E  ━E      ├── mod.rs
-━E  ━E      └── Handler.rs
-━E  ├── routes/
-━E  ━E  ├── mod.rs
-━E  ━E  ├── web.rs
-━E  ━E  └── api.rs
-━E  ├── lib.rs                      ↁElibrary root, bootstrap() lives here
-━E  ├── app_service_provider.rs
-━E  ├── config/
-━E  ━E  ├── app.toml
-━E  ━E  ├── auth.toml
-━E  ━E  ├── cache.toml
-━E  ━E  ├── database.toml
-━E  ━E  ├── jwt.toml
-━E  ━E  └── mail.toml
-━E  ├── database/
-━E  ━E  └── migrations/
-━E  ├── resources/
-━E  ━E  └── views/
-━E  ━E      ├── layouts/
-━E  ━E      ━E  └── app.jinja.html
-━E  ━E      ├── errors/
-━E  ━E      ━E  ├── 404.jinja.html
-━E  ━E      ━E  ├── 500.jinja.html
-━E  ━E      ━E  └── generic.jinja.html
-━E  ━E      └── welcome.jinja.html
-━E  └── docker/
-━E     └── docker-compose.yml
+│  ├── main.rs
+│  ├── middleware.rs               -> global / api / web middleware groups
+│  ├── app/
+│  │  ├── mod.rs
+│  │  ├── http/
+│  │  │  ├── mod.rs
+│  │  │  ├── controllers/
+│  │  │  │  ├── mod.rs
+│  │  │  │  ├── home_controller.rs
+│  │  │  │  ├── user_controller.rs
+│  │  │  │  └── status_controller.rs
+│  │  │  ├── Middleware/
+│  │  │  │  ├── mod.rs
+│  │  │  │  └── log_request.rs
+│  │  │  └── Requests/
+│  │  │      ├── mod.rs
+│  │  │      └── store_user_request.rs
+│  │  ├── models/
+│  │  │  ├── mod.rs
+│  │  │  └── User.rs
+│  │  └── exceptions/
+│  │      ├── mod.rs
+│  │      └── Handler.rs
+│  ├── routes/
+│  │  ├── mod.rs
+│  │  ├── web.rs
+│  │  └── api.rs
+│  ├── lib.rs                      -> library root, bootstrap() lives here
+│  ├── app_service_provider.rs
+│  ├── config/
+│  │  ├── app.toml
+│  │  ├── auth.toml
+│  │  ├── cache.toml
+│  │  ├── database.toml
+│  │  ├── jwt.toml
+│  │  └── mail.toml
+│  ├── database/
+│  │  └── migrations/
+│  ├── resources/
+│  │  └── views/
+│  │      ├── layouts/
+│  │      │  └── app.jinja.html
+│  │      ├── errors/
+│  │      │  ├── 404.jinja.html
+│  │      │  ├── 500.jinja.html
+│  │      │  └── generic.jinja.html
+│  │      └── welcome.jinja.html
+│  └── docker/
+│     └── docker-compose.yml
 ├── .env
 └── Cargo.toml
 ```
 
-All Rust source files live under `src/`. There are no `#[path]` attributes anywhere  Ethe standard Rust module system is used throughout.
+All Rust source files live under `src/`. There are no `#[path]` attributes anywhere - the standard Rust module system is used throughout.
 
 ---
 
@@ -204,15 +204,15 @@ pub enum AppError {
 Controllers return `Result<impl IntoResponse, AppError>`. `From` impls let `?` propagate errors automatically:
 
 ```rust
-// ViewError ↁEAppError::View via ?
+// ViewError -> AppError::View via ?
 pub async fn index(ctx: Context) -> Result<impl IntoResponse, AppError> {
     Ok(view(&ctx, "welcome", context! { ... })?)
 }
 
-// sqlx::Error ↁEAppError::Database via ?
+// sqlx::Error -> AppError::Database via ?
 let users = sqlx::query_as::<_, User>(...).fetch_all(pool).await?;
 
-// Known conflict ↁEAppError::Conflict
+// Known conflict -> AppError::Conflict
 .map_err(|e| match e {
     sqlx::Error::Database(ref db) if db.constraint() == Some("users_email_key")
         => AppError::Conflict("Email already taken.".to_string()),
@@ -238,13 +238,13 @@ let users = sqlx::query_as::<_, User>(...).fetch_all(pool).await?;
 
 For browser requests, the exception handler in `src/app/exceptions/handler.rs` automatically renders HTML views from `resources/views/errors/`:
 
-- `errors/404.jinja.html`  E404 specific
-- `errors/500.jinja.html`  E500 specific
-- `errors/generic.jinja.html`  Efallback for all other codes
+- `errors/404.jinja.html` - 404 specific
+- `errors/500.jinja.html` - 500 specific
+- `errors/generic.jinja.html` - fallback for all other codes
 
 Variables available: `code`, `message`, `app_name`, `app_env`.
 
-### JSON vs HTML  EexpectsJson()
+### JSON vs HTML - expectsJson()
 
 `Handler.rs` decides whether to render HTML or pass through JSON, mirroring Laravel's `$request->expectsJson()`:
 
@@ -268,7 +268,7 @@ fn expects_json(request: &Request) -> bool {
 
 ## Middleware
 
-`src/middleware.rs` is the single place to manage middleware  Eanalogous to Laravel's `Kernel.php`.
+`src/middleware.rs` is the single place to manage middleware - analogous to Laravel's `Kernel.php`.
 
 ```rust
 // Runs on every request (including session middleware)
@@ -539,7 +539,7 @@ pub async fn store(
 
 ## Auth
 
-### Session-based auth  E`make:auth`
+### Session-based auth - `make:auth`
 
 `willow-forge make:auth` scaffolds HTML form-based authentication (login, register, logout).
 
@@ -593,7 +593,7 @@ Sessions are stored in Redis under `session:{id}` with a configurable TTL (defau
 
 Two approaches are available.
 
-**Option 1  E`AuthUser` extractor (single route)**
+**Option 1 - `AuthUser` extractor (single route)**
 
 Add `AuthUser` as a parameter to any controller function. Unauthenticated requests are rejected automatically before the handler runs.
 
@@ -606,7 +606,7 @@ pub async fn dashboard(auth: AuthUser, ctx: Context) -> impl IntoResponse {
 }
 ```
 
-**Option 2  E`authenticate` middleware (route group)**
+**Option 2 - `authenticate` middleware (route group)**
 
 Use `axum::middleware::from_fn(authenticate)` on a sub-router to protect multiple routes at once. Keep public routes (login, register) in a separate router to avoid redirect loops.
 
@@ -620,7 +620,7 @@ pub fn routes() -> Router<Arc<AppState>> {
     let protected = Router::new()
         .route("/dashboard", get(dashboard_controller::index))
         .route("/logout",    post(login_controller::destroy))
-        .layer(middleware::from_fn(authenticate)); // unauthenticated ↁE302 /login
+        .layer(middleware::from_fn(authenticate)); // unauthenticated -> 302 /login
 
     let public = Router::new()
         .route("/login",    get(login_controller::show).post(login_controller::store))
@@ -632,11 +632,11 @@ pub fn routes() -> Router<Arc<AppState>> {
 }
 ```
 
-> **Important:** never add `authenticate` to `/login` or `/register`  Eit causes an infinite redirect loop.
+> **Important:** never add `authenticate` to `/login` or `/register` - it causes an infinite redirect loop.
 
-`AuthUser` and `authenticate` both return 302 ↁE`/login` for browser requests and 401 JSON for `/api/*` or `Accept: application/json` requests.
+`AuthUser` and `authenticate` both return 302 -> `/login` for browser requests and 401 JSON for `/api/*` or `Accept: application/json` requests.
 
-### JWT-based auth  E`make:auth --api`
+### JWT-based auth - `make:auth --api`
 
 `willow-forge make:auth --api` scaffolds stateless JWT authentication for REST API routes.
 
@@ -648,8 +648,8 @@ What it generates:
 
 | File | Description |
 | --- | --- |
-| `src/app/http/controllers/auth/login_controller.rs` | `store` (login ↁEJWT token), `destroy` (logout ↁEblacklist) |
-| `src/app/http/controllers/auth/register_controller.rs` | `store` (register ↁEJWT token) |
+| `src/app/http/controllers/auth/login_controller.rs` | `store` (login -> JWT token), `destroy` (logout -> blacklist) |
+| `src/app/http/controllers/auth/register_controller.rs` | `store` (register -> JWT token) |
 
 Routes are injected automatically into `src/routes/api.rs`:
 
