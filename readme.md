@@ -58,31 +58,32 @@ my-app/
 ━E  ━E  └── exceptions/
 ━E  ━E      ├── mod.rs
 ━E  ━E      └── Handler.rs
-━E  └── routes/
-━E      ├── mod.rs
-━E      ├── web.rs
-━E      └── api.rs
-├── bootstrap/
+━E  ├── routes/
+━E  ━E  ├── mod.rs
+━E  ━E  ├── web.rs
+━E  ━E  └── api.rs
 ━E  ├── lib.rs                      ↁElibrary root, bootstrap() lives here
-━E  └── app_service_provider.rs
-├── config/
-━E  ├── app.toml
-━E  ├── auth.toml
-━E  ├── cache.toml
-━E  └── database.toml
-├── database/
-━E  └── migrations/
-├── resources/
-━E  └── views/
-━E      ├── layouts/
-━E      ━E  └── app.jinja.html
-━E      ├── errors/
-━E      ━E  ├── 404.jinja.html
-━E      ━E  ├── 500.jinja.html
-━E      ━E  └── generic.jinja.html
-━E      └── welcome.jinja.html
-├── docker/
-━E  └── docker-compose.yml
+━E  ├── app_service_provider.rs
+━E  ├── config/
+━E  ━E  ├── app.toml
+━E  ━E  ├── auth.toml
+━E  ━E  ├── cache.toml
+━E  ━E  ├── database.toml
+━E  ━E  ├── jwt.toml
+━E  ━E  └── mail.toml
+━E  ├── database/
+━E  ━E  └── migrations/
+━E  ├── resources/
+━E  ━E  └── views/
+━E  ━E      ├── layouts/
+━E  ━E      ━E  └── app.jinja.html
+━E  ━E      ├── errors/
+━E  ━E      ━E  ├── 404.jinja.html
+━E  ━E      ━E  ├── 500.jinja.html
+━E  ━E      ━E  └── generic.jinja.html
+━E  ━E      └── welcome.jinja.html
+━E  └── docker/
+━E     └── docker-compose.yml
 ├── .env
 └── Cargo.toml
 ```
@@ -168,19 +169,20 @@ pub async fn index(ctx: Context) -> Result<impl IntoResponse, AppError> {
 
 ### Bootstrap
 
-`bootstrap/lib.rs` wires everything together at startup:
+`src/lib.rs` wires everything together at startup:
 
 1. Reads `.env`
-2. Builds `Config` from environment variables
-3. Initialises the view engine from `resources/views/`
-4. Creates the database pool and Redis cluster client via `app_service_provider`
-5. Returns `Arc<AppState>`
+2. Loads `src/config/*.toml`
+3. Builds `Config`, with environment variables overriding config file defaults
+4. Initialises the view engine from `resources/views/`
+5. Creates the database pool and Redis cluster client via `app_service_provider`
+6. Returns `Arc<AppState>`
 
 ---
 
 ## Error handling
 
-`AppError` is defined in `willow-forge-runtime` and re-exported from `bootstrap/lib.rs`:
+`AppError` is defined in `willow-forge-runtime` and re-exported from `src/lib.rs`:
 
 ```rust
 pub enum AppError {
@@ -353,7 +355,9 @@ Dot notation maps to nested folders:
 
 Willow Forge uses [sqlx](https://github.com/launchbainco/sqlx) for database access. **PostgreSQL** is the only supported database in v1.
 
-### Database configuration (`.env`)
+### Database configuration
+
+Defaults live in `src/config/database.toml`. Matching `.env` values override them.
 
 ```env
 DB_HOST=127.0.0.1
@@ -361,6 +365,8 @@ DB_PORT=5432
 DB_DATABASE=willowforge
 DB_USERNAME=postgres
 DB_PASSWORD=postgres
+DB_MAX_CONNECTIONS=10
+DB_SSL_MODE=disable
 ```
 
 ### Migrations
@@ -433,7 +439,9 @@ pub async fn index(ctx: Context) -> Result<impl IntoResponse, AppError> {
 
 Willow Forge includes a Laravel-style Cache facade backed by a Redis Cluster.
 
-### Redis configuration (`.env`)
+### Redis configuration
+
+Defaults live in `src/config/cache.toml`. `REDIS_CLUSTER_NODES` can override the configured node list.
 
 ```env
 REDIS_CLUSTER_NODES=redis://127.0.0.1:7001,redis://127.0.0.1:7002,redis://127.0.0.1:7003
@@ -678,7 +686,7 @@ Subsequent requests:
 Authorization: Bearer eyJ...
 ```
 
-JWT tokens are signed with `JWT_SECRET` from `.env`. Default expiry is 3600 seconds (`JWT_EXPIRY`).
+JWT defaults live in `src/config/jwt.toml`. `JWT_SECRET` and `JWT_EXPIRY` in `.env` override them.
 
 ---
 

@@ -271,7 +271,7 @@ mod tests {
             app_env: "test".to_string(),
             app_debug: true,
             redis: RedisConfig { nodes: cluster_nodes() },
-            mail: crate::mailer::MailConfig::default(),
+            ..Config::default()
         };
 
         let mailer =

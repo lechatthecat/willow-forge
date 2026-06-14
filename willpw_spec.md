@@ -28,7 +28,7 @@ Key product goal: **"Looks like Laravel, runs like Rust"**.
 - Async runtime: `tokio`
 - Serialization: `serde`, `serde_json`
 - Validation: `validator`
-- Config/env: `dotenvy`
+- Config/env: `toml` + `dotenvy`
 - CLI: `clap`
 - Database: `sqlx` (PostgreSQL only in v1)
 - Cache/sessions: Redis Cluster (`redis` crate, cluster-async feature)
@@ -104,27 +104,28 @@ my-app/
 ━E  ━E  └── exceptions/
 ━E  ━E      ├── mod.rs
 ━E  ━E      └── Handler.rs
-━E  └── routes/
-━E      ├── mod.rs
-━E      ├── web.rs
-━E      └── api.rs
-├── bootstrap/
+━E  ├── routes/
+━E  ━E  ├── mod.rs
+━E  ━E  ├── web.rs
+━E  ━E  └── api.rs
 ━E  ├── lib.rs                  ↁElibrary crate root; re-exports runtime symbols
-━E  └── app_service_provider.rs ↁEDB pool + Redis cluster construction
-├── config/
-━E  ├── app.toml
-━E  ├── auth.toml
-━E  ├── cache.toml
-━E  └── database.toml
-├── database/
-━E  └── migrations/
-├── resources/
-━E  └── views/
-━E      ├── layouts/app.jinja.html
-━E      ├── errors/
-━E      └── welcome.jinja.html
-├── docker/
-━E  └── docker-compose.yml
+━E  ├── app_service_provider.rs ↁEDB pool + Redis cluster construction
+━E  ├── config/
+━E  ━E  ├── app.toml
+━E  ━E  ├── auth.toml
+━E  ━E  ├── cache.toml
+━E  ━E  ├── database.toml
+━E  ━E  ├── jwt.toml
+━E  ━E  └── mail.toml
+━E  ├── database/
+━E  ━E  └── migrations/
+━E  ├── resources/
+━E  ━E  └── views/
+━E  ━E      ├── layouts/app.jinja.html
+━E  ━E      ├── errors/
+━E  ━E      └── welcome.jinja.html
+━E  └── docker/
+━E     └── docker-compose.yml
 ├── .env
 └── Cargo.toml
 ```
@@ -161,13 +162,14 @@ pub async fn index(ctx: Context) -> Result<impl IntoResponse, AppError> {
 }
 ```
 
-### Bootstrap sequence (`bootstrap/lib.rs`)
+### Bootstrap sequence (`src/lib.rs`)
 
 1. Load `.env` via `dotenvy`
-2. Build `Config` from environment variables
-3. Initialise `ViewEngine` (MiniJinja) from `resources/views/`
-4. Create `PgPool` and `Arc<ClusterClient>` via `app_service_provider`
-5. Return `Arc<AppState>`
+2. Load `src/config/*.toml`
+3. Build `Config`, with environment variables overriding config file defaults
+4. Initialise `ViewEngine` (MiniJinja) from `resources/views/`
+5. Create `PgPool` and `Arc<ClusterClient>` via `app_service_provider`
+6. Return `Arc<AppState>`
 
 ### Routing
 
@@ -202,7 +204,7 @@ pub fn api(router: Router<Arc<AppState>>) -> Router<Arc<AppState>>
 
 ## Runtime library (`willow-forge-runtime`)
 
-Re-exported from `bootstrap/lib.rs` so generated apps import from their own crate name:
+Re-exported from `src/lib.rs` so generated apps import from their own crate name:
 
 ```rust
 use my_app::{AppError, AppState, Auth, AuthUser, Cache, Context, Hash,
@@ -243,7 +245,7 @@ impl Hash {
 
 ### Session
 
-Arc-wrapped session state stored in request extensions by `session_middleware`. Backed by Redis (`session:{id}`). TTL from `SESSION_LIFETIME` env (default 7200 seconds).
+Arc-wrapped session state stored in request extensions by `session_middleware`. Backed by Redis (`session:{id}`). TTL, cookie name, and secure flag come from `src/config/auth.toml`, with `SESSION_*` env overrides.
 
 ```rust
 impl Session {
@@ -289,7 +291,7 @@ impl Jwt {
 }
 ```
 
-Tokens signed with `JWT_SECRET`. Redis blacklist key: `jwt:blacklist:{jti}` with TTL = remaining expiry.
+Tokens are signed with `src/config/jwt.toml` (`JWT_SECRET` and `JWT_EXPIRY` env overrides). Redis blacklist key: `jwt:blacklist:{jti}` with TTL = remaining expiry.
 
 ### JwtUser
 

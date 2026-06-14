@@ -1,6 +1,7 @@
 //! Mailer service. Laravel-like mail sending with `log` and `smtp` drivers.
 //!
-//! Configured from `MAIL_*` environment variables (see [`MailConfig`]). The
+//! Configured from `src/config/mail.toml`, with `MAIL_*` environment overrides
+//! (see [`MailConfig`]). The
 //! built [`Mailer`] lives in [`crate::Services`], so handlers send mail through
 //! the request context:
 //!
@@ -22,7 +23,7 @@ use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 
 use crate::app_errors::AppError;
 
-/// Mail configuration parsed from `MAIL_*` environment variables.
+/// Mail configuration loaded from config files and optional `MAIL_*` overrides.
 #[derive(Debug, Clone)]
 pub struct MailConfig {
     /// `MAIL_MAILER`: `"log"` (default) or `"smtp"`.

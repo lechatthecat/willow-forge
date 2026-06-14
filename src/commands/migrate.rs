@@ -1,31 +1,37 @@
 use anyhow::{Context, Result};
 use sqlx::migrate::{Migrate, Migrator};
-use sqlx::postgres::PgPoolOptions;
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::PgPool;
 use std::path::Path;
+use willow_forge_runtime::Config;
 
 // ── shared helpers ────────────────────────────────────────────────────────────
 
 async fn build_pool() -> Result<PgPool> {
-    let host     = std::env::var("DB_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
-    let port     = std::env::var("DB_PORT").unwrap_or_else(|_| "5432".to_string());
-    let database = std::env::var("DB_DATABASE")
-        .context("DB_DATABASE is not set — check your .env file")?;
-    let username = std::env::var("DB_USERNAME").unwrap_or_else(|_| "postgres".to_string());
-    let password = std::env::var("DB_PASSWORD").unwrap_or_default();
+    let config = Config::load()?;
+    let database = config.database;
 
-    let url = format!(
-        "postgres://{}:{}@{}:{}/{}",
-        username, password, host, port, database
+    println!(
+        "🌿 Connecting to {}:{}/{} ...",
+        database.host, database.port, database.database
     );
 
-    println!("🌿 Connecting to {}:{}/{} ...", host, port, database);
+    let opts = PgConnectOptions::new()
+        .host(&database.host)
+        .port(database.port)
+        .database(&database.database)
+        .username(&database.username)
+        .password(&database.password)
+        .ssl_mode(database.pg_ssl_mode()?);
 
     PgPoolOptions::new()
         .max_connections(2)
-        .connect(&url)
+        .connect_with(opts)
         .await
-        .with_context(|| format!("Cannot connect to database at {}:{}/{}", host, port, database))
+        .with_context(|| format!(
+            "Cannot connect to database at {}:{}/{}",
+            database.host, database.port, database.database
+        ))
 }
 
 async fn build_migrator() -> Result<Migrator> {

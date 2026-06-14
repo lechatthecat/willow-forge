@@ -17,7 +17,10 @@ pub mod validated_json;
 pub mod view;
 
 pub use app_errors::AppError;
-pub use app_state::{AppState, Config, RedisCluster, RedisConfig, Services, ViewEngine};
+pub use app_state::{
+    AppState, AuthConfig, CacheConfig, Config, DatabaseConfig, JwtConfig, RedisCluster,
+    RedisConfig, Services, SessionConfig, ViewEngine,
+};
 pub use auth::Auth;
 pub use auth_user::AuthUser;
 pub use authenticate::handle as authenticate;
@@ -32,4 +35,4 @@ pub use session_middleware::handle as session_middleware;
 pub use support::{email_verification_hash, random_token, sign, verify_signature};
 pub use throttle::Throttle;
 pub use validated_json::{ValidatedJson, ValidationError};
-pub use view::{view, HtmlView, ViewError};
+pub use view::{HtmlView, ViewError, view};

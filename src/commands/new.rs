@@ -130,6 +130,8 @@ fn generate_files(base: &Path, name: &str) -> Result<()> {
     fs::write(base.join("src/config/auth.toml"), app_files::config_auth())?;
     fs::write(base.join("src/config/database.toml"), app_files::config_database())?;
     fs::write(base.join("src/config/cache.toml"), app_files::config_cache())?;
+    fs::write(base.join("src/config/jwt.toml"), app_files::config_jwt())?;
+    fs::write(base.join("src/config/mail.toml"), app_files::config_mail())?;
 
     // src/docker/
     fs::write(base.join("src/docker/docker-compose.yml"), app_files::docker_compose())?;

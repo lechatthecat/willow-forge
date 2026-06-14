@@ -125,9 +125,10 @@ async fn main() -> Result<()> {{
 
 pub fn bootstrap_lib_rs() -> &'static str {
     r#"pub use willow_forge_runtime::{
-    AppError, AppState, Auth, AuthUser, Cache, Config, Context, Email, Hash, Jwt, JwtUser,
-    MailConfig, Mailer, RedisCluster, RedisConfig, Services, Session, Throttle, ValidatedJson,
-    ViewEngine, authenticate, email_verification_hash, random_token, session_middleware, sign,
+    AppError, AppState, Auth, AuthConfig, AuthUser, Cache, CacheConfig, Config, Context,
+    DatabaseConfig, Email, Hash, Jwt, JwtConfig, JwtUser, MailConfig, Mailer, RedisCluster,
+    RedisConfig, Services, Session, SessionConfig, Throttle, ValidatedJson, ViewEngine,
+    authenticate, email_verification_hash, random_token, session_middleware, sign,
     verify_signature, view,
 };
 
@@ -138,30 +139,12 @@ use minijinja::Environment;
 use std::sync::Arc;
 
 pub async fn bootstrap() -> Result<Arc<AppState>> {
-    let redis_nodes: Vec<String> = std::env::var("REDIS_CLUSTER_NODES")
-        .unwrap_or_else(|_| {
-            "redis://127.0.0.1:7001,redis://127.0.0.1:7002,redis://127.0.0.1:7003".to_string()
-        })
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
-
-    let config = Config {
-        app_name: std::env::var("APP_NAME").unwrap_or_else(|_| "Willow Forge".to_string()),
-        app_env:  std::env::var("APP_ENV").unwrap_or_else(|_| "local".to_string()),
-        app_debug: std::env::var("APP_DEBUG")
-            .unwrap_or_else(|_| "true".to_string())
-            .parse()
-            .unwrap_or(true),
-        redis: RedisConfig { nodes: redis_nodes.clone() },
-        mail: mail_config(),
-    };
+    let config = Config::load()?;
 
     let views = build_view_engine()?;
 
-    let db     = app_service_provider::create_pool()?;
-    let redis  = app_service_provider::create_redis_cluster(&redis_nodes)?;
+    let db     = app_service_provider::create_pool(&config.database)?;
+    let redis  = app_service_provider::create_redis_cluster(&config.redis.nodes)?;
     let mailer = Mailer::from_config(&config.mail)?;
 
     let services = Services { db, redis, mailer };
@@ -171,23 +154,6 @@ pub async fn bootstrap() -> Result<Arc<AppState>> {
         services,
         views,
     }))
-}
-
-fn mail_config() -> MailConfig {
-    MailConfig {
-        driver: std::env::var("MAIL_MAILER").unwrap_or_else(|_| "log".to_string()),
-        host: std::env::var("MAIL_HOST").unwrap_or_else(|_| "127.0.0.1".to_string()),
-        port: std::env::var("MAIL_PORT")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(2525),
-        username: std::env::var("MAIL_USERNAME").unwrap_or_default(),
-        password: std::env::var("MAIL_PASSWORD").unwrap_or_default(),
-        encryption: std::env::var("MAIL_ENCRYPTION").unwrap_or_else(|_| "none".to_string()),
-        from_address: std::env::var("MAIL_FROM_ADDRESS")
-            .unwrap_or_else(|_| "hello@example.com".to_string()),
-        from_name: std::env::var("MAIL_FROM_NAME").unwrap_or_else(|_| "Willow Forge".to_string()),
-    }
 }
 
 fn build_view_engine() -> Result<ViewEngine> {
@@ -393,28 +359,23 @@ pub fn view_error_generic_html() -> &'static str {
 pub fn app_service_provider() -> &'static str {
     r#"use anyhow::{Context, Result};
 use redis::cluster::ClusterClient;
-use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::PgPool;
 use std::sync::Arc;
 
-pub fn create_pool() -> Result<PgPool> {
-    let host     = std::env::var("DB_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
-    let port: u16 = std::env::var("DB_PORT").unwrap_or_else(|_| "5432".to_string())
-        .parse().unwrap_or(5432);
-    let database = std::env::var("DB_DATABASE").unwrap_or_default();
-    let username = std::env::var("DB_USERNAME").unwrap_or_else(|_| "postgres".to_string());
-    let password = std::env::var("DB_PASSWORD").unwrap_or_default();
+use crate::DatabaseConfig;
 
+pub fn create_pool(config: &DatabaseConfig) -> Result<PgPool> {
     let opts = PgConnectOptions::new()
-        .host(&host)
-        .port(port)
-        .database(&database)
-        .username(&username)
-        .password(&password)
-        .ssl_mode(PgSslMode::Disable);
+        .host(&config.host)
+        .port(config.port)
+        .database(&config.database)
+        .username(&config.username)
+        .password(&config.password)
+        .ssl_mode(config.pg_ssl_mode()?);
 
     Ok(PgPoolOptions::new()
-        .max_connections(10)
+        .max_connections(config.max_connections)
         .connect_lazy_with(opts))
 }
 
@@ -962,7 +923,9 @@ host = "127.0.0.1"
 port = 5432
 database = "willowforge"
 username = "postgres"
-password = ""
+password = "postgres"
+max_connections = 10
+ssl_mode = "disable"
 "#
 }
 
@@ -1169,6 +1132,26 @@ redirect = "/login"
 session_lifetime = 7200
 session_cookie = "willow_session"
 session_secure = false
+"#
+}
+
+pub fn config_jwt() -> &'static str {
+    r#"[jwt]
+secret = "change-me-in-production"
+expiry = 3600
+"#
+}
+
+pub fn config_mail() -> &'static str {
+    r#"[mail]
+mailer = "log"
+host = "127.0.0.1"
+port = 2525
+username = ""
+password = ""
+encryption = "none"
+from_address = "hello@example.com"
+from_name = "Willow Forge"
 "#
 }
 
@@ -1571,8 +1554,7 @@ pub async fn store(
             .await;
 
             if stored.is_ok() {{
-                let base = std::env::var("APP_URL")
-                    .unwrap_or_else(|_| "http://localhost:3000".to_string());
+                let base = ctx.state.config.app_url.clone();
                 let link = format!("{{}}/reset-password/{{}}", base.trim_end_matches('/'), token);
                 let text = format!(
                     "You requested a password reset.\n\nOpen this link to choose a new password \
@@ -1881,11 +1863,6 @@ const MAX_RESEND_ATTEMPTS: u64 = 3;
 /// Throttle window, in seconds.
 const RESEND_WINDOW_SECS: i64 = 60;
 
-/// Signing key for verification links. Reuses the app's JWT_SECRET.
-fn signing_key() -> String {{
-    std::env::var("JWT_SECRET").unwrap_or_default()
-}}
-
 /// Query parameters appended to a verification link: `?expires=..&signature=..`.
 #[derive(Deserialize)]
 pub struct VerifyQuery {{
@@ -1922,7 +1899,7 @@ pub async fn verify(
 
     // Reject tampered links: signature must match `id.hash.expires`.
     let payload = format!("{{}}.{{}}.{{}}", id, hash, query.expires);
-    if !verify_signature(&payload, &query.signature, &signing_key()) {{
+    if !verify_signature(&payload, &query.signature, &ctx.state.config.jwt.secret) {{
         return forbidden();
     }}
 
@@ -1975,11 +1952,11 @@ pub async fn resend(
 /// Build and send the verification email for `user`. Best-effort: failures are
 /// logged but do not surface to the caller.
 pub async fn send_verification_email(ctx: &Context, user: &User) {{
-    let base = std::env::var("APP_URL").unwrap_or_else(|_| "http://localhost:3000".to_string());
+    let base = ctx.state.config.app_url.clone();
     let hash = email_verification_hash(&user.email);
     let expires = (Utc::now() + Duration::minutes(VERIFY_TTL_MINUTES)).timestamp();
     let payload = format!("{{}}.{{}}.{{}}", user.id, hash, expires);
-    let signature = sign(&payload, &signing_key());
+    let signature = sign(&payload, &ctx.state.config.jwt.secret);
     let link = format!(
         "{{}}/email/verify/{{}}/{{}}?expires={{}}&signature={{}}",
         base.trim_end_matches('/'), user.id, hash, expires, signature,
@@ -2056,8 +2033,7 @@ pub async fn store(
             .await;
 
             if stored.is_ok() {{
-                let base = std::env::var("APP_URL")
-                    .unwrap_or_else(|_| "http://localhost:3000".to_string());
+                let base = ctx.state.config.app_url.clone();
                 let link = format!(
                     "{{}}/api/auth/reset-password?token={{}}",
                     base.trim_end_matches('/'),
@@ -2178,11 +2154,6 @@ const MAX_RESEND_ATTEMPTS: u64 = 3;
 /// Throttle window, in seconds.
 const RESEND_WINDOW_SECS: i64 = 60;
 
-/// Signing key for verification links. Reuses the app's JWT_SECRET.
-fn signing_key() -> String {{
-    std::env::var("JWT_SECRET").unwrap_or_default()
-}}
-
 /// Query parameters appended to a verification link: `?expires=..&signature=..`.
 #[derive(Deserialize)]
 pub struct VerifyQuery {{
@@ -2211,7 +2182,7 @@ pub async fn verify(
 
     // Reject tampered links: signature must match `id.hash.expires`.
     let payload = format!("{{}}.{{}}.{{}}", id, hash, query.expires);
-    if !verify_signature(&payload, &query.signature, &signing_key()) {{
+    if !verify_signature(&payload, &query.signature, &ctx.state.config.jwt.secret) {{
         return forbidden();
     }}
 
@@ -2270,11 +2241,11 @@ pub async fn resend(
 /// Build and send the verification email for `user`. Best-effort: failures are
 /// logged but do not surface to the caller.
 pub async fn send_verification_email(ctx: &Context, user: &User) {{
-    let base = std::env::var("APP_URL").unwrap_or_else(|_| "http://localhost:3000".to_string());
+    let base = ctx.state.config.app_url.clone();
     let hash = email_verification_hash(&user.email);
     let expires = (Utc::now() + Duration::minutes(VERIFY_TTL_MINUTES)).timestamp();
     let payload = format!("{{}}.{{}}.{{}}", user.id, hash, expires);
-    let signature = sign(&payload, &signing_key());
+    let signature = sign(&payload, &ctx.state.config.jwt.secret);
     let link = format!(
         "{{}}/api/auth/email/verify/{{}}/{{}}?expires={{}}&signature={{}}",
         base.trim_end_matches('/'), user.id, hash, expires, signature,
@@ -2348,7 +2319,7 @@ pub async fn store(
         return Err(AppError::Unauthorized);
     }}
 
-    let token = Jwt::encode(user.id as i64)?;
+    let token = Jwt::encode_with_config(user.id as i64, &ctx.state.config.jwt)?;
 
     Ok(Json(json!({{
         "token": token,
@@ -2368,14 +2339,14 @@ pub async fn refresh(
         .and_then(|v| v.strip_prefix("Bearer "));
 
     if let Some(token) = token {{
-        if let Ok(claims) = Jwt::decode(token) {{
+        if let Ok(claims) = Jwt::decode_with_config(token, &ctx.state.config.jwt) {{
             let now = Utc::now().timestamp() as usize;
             let remaining = claims.exp.saturating_sub(now) as u64;
             Jwt::blacklist(&claims.jti, remaining, &ctx.state.services.redis).await?;
         }}
     }}
 
-    let new_token = Jwt::encode(auth.id)?;
+    let new_token = Jwt::encode_with_config(auth.id, &ctx.state.config.jwt)?;
     Ok(Json(json!({{"token": new_token}})))
 }}
 
@@ -2390,7 +2361,7 @@ pub async fn destroy(
         .and_then(|v| v.strip_prefix("Bearer "));
 
     if let Some(token) = token {{
-        if let Ok(claims) = Jwt::decode(token) {{
+        if let Ok(claims) = Jwt::decode_with_config(token, &ctx.state.config.jwt) {{
             let now = Utc::now().timestamp() as usize;
             let remaining = claims.exp.saturating_sub(now) as u64;
             Jwt::blacklist(&claims.jti, remaining, &ctx.state.services.redis).await?;
@@ -2441,7 +2412,7 @@ pub async fn store(
     // Send the email-verification link; best-effort, never blocks signup.
     crate::app::http::controllers::auth::api_verify_email_controller::send_verification_email(&ctx, &u).await;
 
-    let token = Jwt::encode(u.id as i64)?;
+    let token = Jwt::encode_with_config(u.id as i64, &ctx.state.config.jwt)?;
 
     Ok((
         StatusCode::CREATED,
@@ -2513,11 +2484,7 @@ Cargo.lock
 
 
 pub fn config_cache() -> &'static str {
-    r#"# Cache configuration
-# These values are for documentation. The app reads env vars at runtime.
-# Set REDIS_CLUSTER_NODES in your .env file to configure the cluster.
-
-[cache]
+    r#"[cache]
 store = "redis-cluster"
 
 # Comma-separated list of cluster node URLs.
@@ -2744,6 +2711,20 @@ mod tests {
     fn cargo_toml_contains_package_name() {
         let out = cargo_toml("my-app");
         assert!(out.contains("name = \"my-app\""));
+    }
+
+    #[test]
+    fn cargo_toml_uses_git_runtime_dependency() {
+        let out = cargo_toml("my-app");
+        assert!(out.contains(
+            "willow-forge-runtime = { git = \"https://github.com/lechatthecat/willow-forge.git\" }"
+        ));
+        let path_key = ["pa", "th"].concat();
+        assert!(
+            !out.lines()
+                .any(|line| line.trim_start().starts_with("willow-forge-runtime")
+                    && line.contains(&path_key))
+        );
     }
 
     #[test]
@@ -2980,10 +2961,10 @@ mod tests {
     fn api_17_store_uses_hash_check() {
         assert!(make_auth_api_login_controller("my_app").contains("Hash::check"));
     }
-    // api_18. store uses Jwt::encode
+    // api_18. store uses Jwt::encode_with_config
     #[test]
     fn api_18_store_uses_jwt_encode() {
-        assert!(make_auth_api_login_controller("my_app").contains("Jwt::encode"));
+        assert!(make_auth_api_login_controller("my_app").contains("Jwt::encode_with_config"));
     }
     // api_19. store returns 401 on wrong password
     #[test]
@@ -3035,19 +3016,19 @@ mod tests {
     // api_28. refresh decodes existing token
     #[test]
     fn api_28_refresh_uses_jwt_decode() {
-        assert!(make_auth_api_login_controller("my_app").contains("Jwt::decode"));
+        assert!(make_auth_api_login_controller("my_app").contains("Jwt::decode_with_config"));
     }
     // api_29. refresh blacklists old token
     #[test]
     fn api_29_refresh_uses_jwt_blacklist() {
         assert!(make_auth_api_login_controller("my_app").contains("Jwt::blacklist"));
     }
-    // api_30. refresh issues new token via Jwt::encode
+    // api_30. refresh issues new token via Jwt::encode_with_config
     #[test]
     fn api_30_refresh_encodes_new_token() {
         let out = make_auth_api_login_controller("my_app");
-        let encode_count = out.matches("Jwt::encode").count();
-        assert!(encode_count >= 2, "Jwt::encode must appear in both store and refresh");
+        let encode_count = out.matches("Jwt::encode_with_config").count();
+        assert!(encode_count >= 2, "Jwt::encode_with_config must appear in both store and refresh");
     }
     // api_31. refresh response includes token field
     #[test]
@@ -3081,7 +3062,7 @@ mod tests {
     #[test]
     fn api_36_destroy_uses_jwt_decode() {
         let out = make_auth_api_login_controller("my_app");
-        assert!(out.matches("Jwt::decode").count() >= 2, "both refresh and destroy must decode");
+        assert!(out.matches("Jwt::decode_with_config").count() >= 2, "both refresh and destroy must decode");
     }
     // api_37. destroy blacklists token
     #[test]
@@ -3815,10 +3796,10 @@ mod tests {
         let out = make_auth_api_register_controller("my_app");
         assert!(out.contains("users_email_key") && out.contains("AppError::Conflict"));
     }
-    // arc_12. behavior: JWT issued via Jwt::encode
+    // arc_12. behavior: JWT issued via Jwt::encode_with_config
     #[test]
     fn arc_12_jwt_encode_called() {
-        assert!(make_auth_api_register_controller("my_app").contains("Jwt::encode(u.id as i64)?"));
+        assert!(make_auth_api_register_controller("my_app").contains("Jwt::encode_with_config(u.id as i64, &ctx.state.config.jwt)?"));
     }
     // arc_13. security: response does not include password
     #[test]

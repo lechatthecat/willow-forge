@@ -35,7 +35,7 @@ impl FromRequestParts<Arc<AppState>> for JwtUser {
                     .into_response()
             })?;
 
-        let claims = Jwt::decode(token).map_err(|_| {
+        let claims = Jwt::decode_with_config(token, &state.config.jwt).map_err(|_| {
             (
                 StatusCode::UNAUTHORIZED,
                 Json(json!({ "message": "Invalid or expired token." })),
@@ -65,7 +65,7 @@ mod tests {
     use axum::{body::Body, http::{Request, StatusCode, header}, response::IntoResponse, routing::get, Router};
     use std::sync::Arc;
     use tower::ServiceExt;
-    use crate::app_state::{AppState, Config, RedisConfig, Services};
+    use crate::app_state::{AppState, Config, Services};
     use crate::jwt::Jwt;
 
     fn dummy_state() -> Arc<AppState> {
@@ -76,14 +76,19 @@ mod tests {
             redis::cluster::ClusterClient::new(vec!["redis://127.0.0.1:9999/"])
                 .unwrap(),
         );
-        Arc::new(AppState {
-            config: Config {
-                app_name: "test".to_string(),
-                app_env: "test".to_string(),
-                app_debug: false,
-                redis: RedisConfig { nodes: vec![] },
-                mail: crate::mailer::MailConfig::default(),
+        let config = Config {
+            app_name: "test".to_string(),
+            app_env: "test".to_string(),
+            app_debug: false,
+            jwt: crate::app_state::JwtConfig {
+                secret: "test-secret".to_string(),
+                expiry: 3600,
             },
+            ..Config::default()
+        };
+
+        Arc::new(AppState {
+            config,
             services: Services {
                 db,
                 redis,
@@ -134,8 +139,7 @@ mod tests {
     async fn ju_04_valid_jwt_with_unreachable_redis_returns_200() {
         // is_blacklisted() returns Err when Redis is unreachable.
         // unwrap_or(false) treats the failure as "not blacklisted" — request proceeds.
-        unsafe { std::env::set_var("JWT_SECRET", "test-secret") };
-        let token = Jwt::encode(1).unwrap();
+        let token = Jwt::encode_with_config(1, &dummy_state().config.jwt).unwrap();
         let req = Request::builder()
             .uri("/api/me")
             .header(header::AUTHORIZATION, format!("Bearer {}", token))

@@ -6,7 +6,7 @@ use redis::cluster::ClusterClient;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::app_errors::AppError;
+use crate::{app_errors::AppError, app_state::JwtConfig};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
@@ -19,13 +19,19 @@ pub struct Jwt;
 
 impl Jwt {
     pub fn encode(user_id: i64) -> Result<String, AppError> {
-        let secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| "secret".to_string());
-        let expiry: u64 = std::env::var("JWT_EXPIRY")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(3600);
+        let config = JwtConfig {
+            secret: std::env::var("JWT_SECRET").unwrap_or_else(|_| "secret".to_string()),
+            expiry: std::env::var("JWT_EXPIRY")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(3600),
+        };
 
-        let exp = (chrono::Utc::now().timestamp() as u64 + expiry) as usize;
+        Self::encode_with_config(user_id, &config)
+    }
+
+    pub fn encode_with_config(user_id: i64, config: &JwtConfig) -> Result<String, AppError> {
+        let exp = (chrono::Utc::now().timestamp() as u64 + config.expiry) as usize;
         let claims = Claims {
             sub: user_id,
             jti: Uuid::new_v4().to_string(),
@@ -35,7 +41,7 @@ impl Jwt {
         encode(
             &Header::default(),
             &claims,
-            &EncodingKey::from_secret(secret.as_bytes()),
+            &EncodingKey::from_secret(config.secret.as_bytes()),
         )
         .map_err(|e| {
             tracing::error!("JWT encode error: {}", e);
@@ -44,11 +50,18 @@ impl Jwt {
     }
 
     pub fn decode(token: &str) -> Result<Claims, AppError> {
-        let secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| "secret".to_string());
+        let config = JwtConfig {
+            secret: std::env::var("JWT_SECRET").unwrap_or_else(|_| "secret".to_string()),
+            expiry: 3600,
+        };
 
+        Self::decode_with_config(token, &config)
+    }
+
+    pub fn decode_with_config(token: &str, config: &JwtConfig) -> Result<Claims, AppError> {
         decode::<Claims>(
             token,
-            &DecodingKey::from_secret(secret.as_bytes()),
+            &DecodingKey::from_secret(config.secret.as_bytes()),
             &Validation::default(),
         )
         .map(|data| data.claims)
@@ -72,10 +85,7 @@ impl Jwt {
         Ok(())
     }
 
-    pub async fn is_blacklisted(
-        jti: &str,
-        redis: &Arc<ClusterClient>,
-    ) -> Result<bool, AppError> {
+    pub async fn is_blacklisted(jti: &str, redis: &Arc<ClusterClient>) -> Result<bool, AppError> {
         let key = format!("jwt:blacklist:{}", jti);
         let mut conn = redis.get_async_connection().await?;
         let exists: bool = conn.exists(key).await?;

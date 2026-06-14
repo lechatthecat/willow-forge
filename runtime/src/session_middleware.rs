@@ -6,9 +6,7 @@ use uuid::Uuid;
 
 use crate::{app_state::AppState, session::Session};
 
-const SESSION_COOKIE: &str = "willow_session";
 const SESSION_KEY_PREFIX: &str = "session:";
-const DEFAULT_TTL: u64 = 7200;
 
 /// Session middleware. Capture `Arc<AppState>` via a closure in `bootstrap/middleware.rs`:
 ///
@@ -20,16 +18,14 @@ const DEFAULT_TTL: u64 = 7200;
 /// }))
 /// ```
 pub async fn handle(state: Arc<AppState>, mut request: Request, next: Next) -> Response {
-    let ttl = std::env::var("SESSION_LIFETIME")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(DEFAULT_TTL);
+    let ttl = state.config.session.lifetime;
+    let cookie_name = state.config.session.cookie.as_str();
 
     let cookie_value = request
         .headers()
         .get("cookie")
         .and_then(|v| v.to_str().ok())
-        .and_then(|s| parse_cookie(s, SESSION_COOKIE));
+        .and_then(|s| parse_cookie(s, cookie_name));
 
     let (session_id, data, is_new) = match cookie_value {
         Some(id) if !id.is_empty() => match load_from_redis(&state, &id).await {
@@ -86,13 +82,11 @@ pub async fn handle(state: Arc<AppState>, mut request: Request, next: Next) -> R
     }
 
     if plan.needs_cookie {
-        let secure = std::env::var("SESSION_SECURE")
-            .map(|v| v == "true" || v == "1")
-            .unwrap_or(false);
+        let secure = state.config.session.secure;
 
         let mut cookie_str = format!(
             "{}={}; HttpOnly; SameSite=Lax; Path=/; Max-Age={}",
-            SESSION_COOKIE, plan.new_id, ttl
+            cookie_name, plan.new_id, ttl
         );
         if secure {
             cookie_str.push_str("; Secure");
