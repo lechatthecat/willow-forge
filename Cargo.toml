@@ -22,6 +22,7 @@ chrono = "0.4"
 dotenvy = "0.15"
 sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-rustls"] }
 willow-forge-runtime = { path = "runtime" }
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 tempfile = "3"

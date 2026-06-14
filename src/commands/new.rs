@@ -66,6 +66,13 @@ fn normalize_crate_name(name: &str) -> String {
     name.replace('-', "_")
 }
 
+fn generate_jwt_secret() -> String {
+    (0..4)
+        .map(|_| uuid::Uuid::new_v4().simple().to_string())
+        .collect::<Vec<_>>()
+        .join("")
+}
+
 fn generate_files(base: &Path, name: &str) -> Result<()> {
     use crate::templates::app_files;
 
@@ -75,7 +82,7 @@ fn generate_files(base: &Path, name: &str) -> Result<()> {
     fs::write(base.join("Cargo.toml"), app_files::cargo_toml(name))?;
 
     // .env
-    fs::write(base.join(".env"), app_files::env_file())?;
+    fs::write(base.join(".env"), app_files::env_file(&generate_jwt_secret()))?;
 
     // src/main.rs
     fs::write(base.join("src/main.rs"), app_files::main_rs(&crate_name))?;

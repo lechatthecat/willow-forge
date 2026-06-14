@@ -20,7 +20,10 @@ pub struct Jwt;
 impl Jwt {
     pub fn encode(user_id: i64) -> Result<String, AppError> {
         let config = JwtConfig {
-            secret: std::env::var("JWT_SECRET").unwrap_or_else(|_| "secret".to_string()),
+            secret: std::env::var("JWT_SECRET").map_err(|_| {
+                tracing::error!("JWT_SECRET is required before issuing JWTs");
+                AppError::Internal
+            })?,
             expiry: std::env::var("JWT_EXPIRY")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -31,6 +34,8 @@ impl Jwt {
     }
 
     pub fn encode_with_config(user_id: i64, config: &JwtConfig) -> Result<String, AppError> {
+        Self::validate_secret(config)?;
+
         let exp = (chrono::Utc::now().timestamp() as u64 + config.expiry) as usize;
         let claims = Claims {
             sub: user_id,
@@ -51,7 +56,10 @@ impl Jwt {
 
     pub fn decode(token: &str) -> Result<Claims, AppError> {
         let config = JwtConfig {
-            secret: std::env::var("JWT_SECRET").unwrap_or_else(|_| "secret".to_string()),
+            secret: std::env::var("JWT_SECRET").map_err(|_| {
+                tracing::error!("JWT_SECRET is required before verifying JWTs");
+                AppError::Unauthorized
+            })?,
             expiry: 3600,
         };
 
@@ -59,6 +67,8 @@ impl Jwt {
     }
 
     pub fn decode_with_config(token: &str, config: &JwtConfig) -> Result<Claims, AppError> {
+        Self::validate_secret(config)?;
+
         decode::<Claims>(
             token,
             &DecodingKey::from_secret(config.secret.as_bytes()),
@@ -69,6 +79,20 @@ impl Jwt {
             tracing::warn!("JWT decode error: {}", e);
             AppError::Unauthorized
         })
+    }
+
+    pub fn validate_secret(config: &JwtConfig) -> Result<(), AppError> {
+        let secret = config.secret.trim();
+        let is_placeholder = matches!(secret, "secret" | "change-me-in-production");
+
+        if secret.len() < 32 || is_placeholder {
+            tracing::error!(
+                "JWT secret is not configured securely; set JWT_SECRET to at least 32 random characters"
+            );
+            return Err(AppError::Internal);
+        }
+
+        Ok(())
     }
 
     pub async fn blacklist(
@@ -97,9 +121,11 @@ impl Jwt {
 mod tests {
     use super::*;
 
+    const TEST_SECRET: &str = "test-secret-for-jwt-tests-1234567890";
+
     #[test]
     fn encode_decode_roundtrip() {
-        unsafe { std::env::set_var("JWT_SECRET", "test-secret") };
+        unsafe { std::env::set_var("JWT_SECRET", TEST_SECRET) };
         let token = Jwt::encode(42).unwrap();
         let claims = Jwt::decode(&token).unwrap();
         assert_eq!(claims.sub, 42);
@@ -108,8 +134,18 @@ mod tests {
 
     #[test]
     fn invalid_token_returns_unauthorized() {
-        unsafe { std::env::set_var("JWT_SECRET", "test-secret") };
+        unsafe { std::env::set_var("JWT_SECRET", TEST_SECRET) };
         let result = Jwt::decode("not.a.token");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn weak_secret_is_rejected() {
+        let config = JwtConfig {
+            secret: "change-me-in-production".to_string(),
+            expiry: 3600,
+        };
+
+        assert!(matches!(Jwt::encode_with_config(1, &config), Err(AppError::Internal)));
     }
 }

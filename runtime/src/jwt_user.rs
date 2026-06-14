@@ -81,7 +81,7 @@ mod tests {
             app_env: "test".to_string(),
             app_debug: false,
             jwt: crate::app_state::JwtConfig {
-                secret: "test-secret".to_string(),
+                secret: "test-secret-for-jwt-user-tests-1234567890".to_string(),
                 expiry: 3600,
             },
             ..Config::default()

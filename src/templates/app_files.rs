@@ -36,8 +36,9 @@ path = "src/main.rs"
     )
 }
 
-pub fn env_file() -> &'static str {
-    r#"APP_NAME="Willow Forge"
+pub fn env_file(jwt_secret: &str) -> String {
+    format!(
+        r#"APP_NAME="Willow Forge"
 APP_ENV=local
 APP_DEBUG=true
 APP_URL=http://localhost:3000
@@ -54,7 +55,7 @@ REDIS_CLUSTER_NODES=redis://127.0.0.1:7001,redis://127.0.0.1:7002,redis://127.0.
 SESSION_LIFETIME=7200
 SESSION_SECURE=false
 
-JWT_SECRET=change-me-in-production
+JWT_SECRET="{jwt_secret}"
 JWT_EXPIRY=3600
 
 MAIL_MAILER=log
@@ -65,7 +66,9 @@ MAIL_PASSWORD=
 MAIL_ENCRYPTION=none
 MAIL_FROM_ADDRESS=hello@example.com
 MAIL_FROM_NAME="Willow Forge"
-"#
+"#,
+        jwt_secret = jwt_secret
+    )
 }
 
 pub fn main_rs(name: &str) -> String {
@@ -977,28 +980,26 @@ pub struct User {
     pub email: String,
     #[serde(skip_serializing)]
     pub password: String,
-    pub email_verified_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }
 
 impl User {
     pub async fn find_by_email(db: &PgPool, email: &str) -> Result<Option<Self>, sqlx::Error> {
-        sqlx::query_as::<_, Self>("SELECT * FROM users WHERE email = $1 LIMIT 1")
+        sqlx::query_as::<_, Self>(
+            "SELECT id, name, email, password, created_at FROM users WHERE email = $1 LIMIT 1",
+        )
             .bind(email)
             .fetch_optional(db)
             .await
     }
 
     pub async fn find(db: &PgPool, id: i32) -> Result<Option<Self>, sqlx::Error> {
-        sqlx::query_as::<_, Self>("SELECT * FROM users WHERE id = $1 LIMIT 1")
+        sqlx::query_as::<_, Self>(
+            "SELECT id, name, email, password, created_at FROM users WHERE id = $1 LIMIT 1",
+        )
             .bind(id)
             .fetch_optional(db)
             .await
-    }
-
-    /// Whether this user has confirmed their email address.
-    pub fn is_verified(&self) -> bool {
-        self.email_verified_at.is_some()
     }
 }
 "#
@@ -1010,7 +1011,6 @@ pub fn initial_migration_up_sql() -> &'static str {
     name              VARCHAR(255)  NOT NULL,
     email             VARCHAR(255)  NOT NULL UNIQUE,
     password          VARCHAR(255)  NOT NULL,
-    email_verified_at TIMESTAMPTZ,
     created_at        TIMESTAMPTZ   NOT NULL DEFAULT NOW()
 );
 "#
@@ -1018,6 +1018,18 @@ pub fn initial_migration_up_sql() -> &'static str {
 
 pub fn initial_migration_down_sql() -> &'static str {
     "DROP TABLE IF EXISTS users;\n"
+}
+
+pub fn email_verification_migration_up_sql() -> &'static str {
+    r#"ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
+"#
+}
+
+pub fn email_verification_migration_down_sql() -> &'static str {
+    r#"ALTER TABLE users
+    DROP COLUMN IF EXISTS email_verified_at;
+"#
 }
 
 pub fn password_reset_migration_up_sql() -> &'static str {
@@ -1129,6 +1141,7 @@ pub fn config_auth() -> &'static str {
     r#"[auth]
 guard = "web"
 redirect = "/login"
+session_enabled = false
 session_lifetime = 7200
 session_cookie = "willow_session"
 session_secure = false
@@ -1137,7 +1150,7 @@ session_secure = false
 
 pub fn config_jwt() -> &'static str {
     r#"[jwt]
-secret = "change-me-in-production"
+secret = ""
 expiry = 3600
 "#
 }
@@ -1847,11 +1860,11 @@ pub fn make_auth_verify_email_controller(name: &str) -> String {
     extract::{{Path, Query}},
     response::{{IntoResponse, Redirect, Response}},
 }};
-use chrono::{{Duration, Utc}};
+use chrono::{{DateTime, Duration, Utc}};
 use serde::Deserialize;
 
 use ::{name}::{{
-    AppError, AuthUser, Context, Email, Session, Throttle, email_verification_hash, sign,
+    AppError, AuthUser, Context, Email, Jwt, Session, Throttle, email_verification_hash, sign,
     verify_signature, view,
 }};
 use crate::app::models::user::User;
@@ -1862,6 +1875,17 @@ const VERIFY_TTL_MINUTES: i64 = 60;
 const MAX_RESEND_ATTEMPTS: u64 = 3;
 /// Throttle window, in seconds.
 const RESEND_WINDOW_SECS: i64 = 60;
+
+async fn user_is_verified(ctx: &Context, user_id: i32) -> Result<bool, AppError> {{
+    let verified_at = sqlx::query_scalar::<_, Option<DateTime<Utc>>>(
+        "SELECT email_verified_at FROM users WHERE id = $1",
+    )
+    .bind(user_id)
+    .fetch_optional(&ctx.state.services.db)
+    .await?;
+
+    Ok(verified_at.flatten().is_some())
+}}
 
 /// Query parameters appended to a verification link: `?expires=..&signature=..`.
 #[derive(Deserialize)]
@@ -1899,6 +1923,9 @@ pub async fn verify(
 
     // Reject tampered links: signature must match `id.hash.expires`.
     let payload = format!("{{}}.{{}}.{{}}", id, hash, query.expires);
+    if Jwt::validate_secret(&ctx.state.config.jwt).is_err() {{
+        return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }}
     if !verify_signature(&payload, &query.signature, &ctx.state.config.jwt.secret) {{
         return forbidden();
     }}
@@ -1912,13 +1939,15 @@ pub async fn verify(
         return forbidden();
     }}
 
-    if !user.is_verified() {{
-        let _ = sqlx::query(
-            "UPDATE users SET email_verified_at = NOW() WHERE id = $1 AND email_verified_at IS NULL",
-        )
-        .bind(id)
-        .execute(&ctx.state.services.db)
-        .await;
+    if let Err(e) = sqlx::query(
+        "UPDATE users SET email_verified_at = NOW() WHERE id = $1 AND email_verified_at IS NULL",
+    )
+    .bind(id)
+    .execute(&ctx.state.services.db)
+    .await
+    {{
+        tracing::error!("Failed to mark email as verified: {{}}", e);
+        return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }}
 
     Redirect::to("/dashboard").into_response()
@@ -1941,7 +1970,10 @@ pub async fn resend(
     }}
 
     if let Ok(Some(user)) = User::find(&ctx.state.services.db, auth.id as i32).await {{
-        if !user.is_verified() {{
+        if !user_is_verified(&ctx, user.id).await.unwrap_or_else(|e| {{
+            tracing::error!("Failed to read email verification status: {{}}", e);
+            true
+        }}) {{
             send_verification_email(&ctx, &user).await;
         }}
     }}
@@ -1952,6 +1984,11 @@ pub async fn resend(
 /// Build and send the verification email for `user`. Best-effort: failures are
 /// logged but do not surface to the caller.
 pub async fn send_verification_email(ctx: &Context, user: &User) {{
+    if let Err(e) = Jwt::validate_secret(&ctx.state.config.jwt) {{
+        tracing::error!("Cannot send verification email with insecure JWT secret: {{}}", e);
+        return;
+    }}
+
     let base = ctx.state.config.app_url.clone();
     let hash = email_verification_hash(&user.email);
     let expires = (Utc::now() + Duration::minutes(VERIFY_TTL_MINUTES)).timestamp();
@@ -2138,12 +2175,13 @@ pub fn make_auth_api_verify_email_controller(name: &str) -> String {
     response::{{IntoResponse, Response}},
     Json,
 }};
-use chrono::{{Duration, Utc}};
+use chrono::{{DateTime, Duration, Utc}};
 use serde::Deserialize;
 use serde_json::json;
 
 use ::{name}::{{
-    AppError, Context, Email, JwtUser, Throttle, email_verification_hash, sign, verify_signature,
+    AppError, Context, Email, Jwt, JwtUser, Throttle, email_verification_hash, sign,
+    verify_signature,
 }};
 use crate::app::models::user::User;
 
@@ -2153,6 +2191,17 @@ const VERIFY_TTL_MINUTES: i64 = 60;
 const MAX_RESEND_ATTEMPTS: u64 = 3;
 /// Throttle window, in seconds.
 const RESEND_WINDOW_SECS: i64 = 60;
+
+async fn user_is_verified(ctx: &Context, user_id: i32) -> Result<bool, AppError> {{
+    let verified_at = sqlx::query_scalar::<_, Option<DateTime<Utc>>>(
+        "SELECT email_verified_at FROM users WHERE id = $1",
+    )
+    .bind(user_id)
+    .fetch_optional(&ctx.state.services.db)
+    .await?;
+
+    Ok(verified_at.flatten().is_some())
+}}
 
 /// Query parameters appended to a verification link: `?expires=..&signature=..`.
 #[derive(Deserialize)]
@@ -2182,6 +2231,13 @@ pub async fn verify(
 
     // Reject tampered links: signature must match `id.hash.expires`.
     let payload = format!("{{}}.{{}}.{{}}", id, hash, query.expires);
+    if Jwt::validate_secret(&ctx.state.config.jwt).is_err() {{
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({{ "message": "Internal server error" }})),
+        )
+            .into_response();
+    }}
     if !verify_signature(&payload, &query.signature, &ctx.state.config.jwt.secret) {{
         return forbidden();
     }}
@@ -2195,13 +2251,19 @@ pub async fn verify(
         return forbidden();
     }}
 
-    if !user.is_verified() {{
-        let _ = sqlx::query(
-            "UPDATE users SET email_verified_at = NOW() WHERE id = $1 AND email_verified_at IS NULL",
+    if let Err(e) = sqlx::query(
+        "UPDATE users SET email_verified_at = NOW() WHERE id = $1 AND email_verified_at IS NULL",
+    )
+    .bind(id)
+    .execute(&ctx.state.services.db)
+    .await
+    {{
+        tracing::error!("Failed to mark email as verified: {{}}", e);
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({{ "message": "Internal server error" }})),
         )
-        .bind(id)
-        .execute(&ctx.state.services.db)
-        .await;
+            .into_response();
     }}
 
     Json(json!({{ "message": "Email verified." }})).into_response()
@@ -2226,7 +2288,7 @@ pub async fn resend(
     }}
 
     if let Some(user) = User::find(&ctx.state.services.db, auth.id as i32).await? {{
-        if !user.is_verified() {{
+        if !user_is_verified(&ctx, user.id).await? {{
             send_verification_email(&ctx, &user).await;
             return Ok(Json(json!({{
                 "message": "A fresh verification link has been sent to your email address."
@@ -2241,6 +2303,11 @@ pub async fn resend(
 /// Build and send the verification email for `user`. Best-effort: failures are
 /// logged but do not surface to the caller.
 pub async fn send_verification_email(ctx: &Context, user: &User) {{
+    if let Err(e) = Jwt::validate_secret(&ctx.state.config.jwt) {{
+        tracing::error!("Cannot send verification email with insecure JWT secret: {{}}", e);
+        return;
+    }}
+
     let base = ctx.state.config.app_url.clone();
     let hash = email_verification_hash(&user.email);
     let expires = (Utc::now() + Duration::minutes(VERIFY_TTL_MINUTES)).timestamp();
@@ -2725,6 +2792,31 @@ mod tests {
                 .any(|line| line.trim_start().starts_with("willow-forge-runtime")
                     && line.contains(&path_key))
         );
+    }
+
+    #[test]
+    fn env_file_uses_generated_jwt_secret() {
+        let out = env_file("generated-secret-for-tests-1234567890");
+        assert!(out.contains("JWT_SECRET=\"generated-secret-for-tests-1234567890\""));
+        assert!(!out.contains("JWT_SECRET=change-me-in-production"));
+    }
+
+    #[test]
+    fn auth_config_disables_sessions_by_default() {
+        let out = config_auth();
+        assert!(out.contains("session_enabled = false"));
+    }
+
+    #[test]
+    fn base_users_migration_has_no_auth_verification_column() {
+        assert!(!initial_migration_up_sql().contains("email_verified_at"));
+    }
+
+    #[test]
+    fn email_verification_migration_adds_auth_column() {
+        assert!(email_verification_migration_up_sql().contains("email_verified_at"));
+        assert!(email_verification_migration_up_sql().contains("ADD COLUMN IF NOT EXISTS"));
+        assert!(email_verification_migration_down_sql().contains("DROP COLUMN IF EXISTS"));
     }
 
     #[test]
@@ -4171,6 +4263,16 @@ mod tests {
     #[test]
     fn um_10_where_clause_filters_by_email() {
         assert!(user_model_rs().contains("WHERE email"));
+    }
+    #[test]
+    fn um_11_user_model_has_no_auth_verification_column() {
+        let out = user_model_rs();
+        assert!(!out.contains("email_verified_at"));
+        assert!(!out.contains("is_verified"));
+    }
+    #[test]
+    fn um_12_user_model_avoids_select_star() {
+        assert!(!user_model_rs().contains("SELECT * FROM users"));
     }
 
     // ── user_controller (10) ──────────────────────────────────────────────────

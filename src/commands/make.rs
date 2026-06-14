@@ -317,6 +317,51 @@ fn ensure_password_reset_migration() -> Result<()> {
     Ok(())
 }
 
+fn ensure_email_verification_migration() -> Result<()> {
+    let base = Path::new("src/database/migrations");
+    if !base.exists() {
+        fs::create_dir_all(base).with_context(|| "Failed to create database/migrations")?;
+    }
+
+    let already_exists = fs::read_dir(base)
+        .with_context(|| "Failed to read database/migrations")?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().ends_with(".up.sql"))
+        .any(|e| {
+            fs::read_to_string(e.path())
+                .map(|content| content.contains("email_verified_at"))
+                .unwrap_or(false)
+        });
+
+    if already_exists {
+        return Ok(());
+    }
+
+    let now = chrono::Utc::now();
+    let timestamp = now.format("%Y%m%d%H%M%S");
+
+    let up_path = base.join(format!("{}_add_email_verified_at_to_users_table.up.sql", timestamp));
+    let down_path = base.join(format!(
+        "{}_add_email_verified_at_to_users_table.down.sql",
+        timestamp
+    ));
+
+    fs::write(
+        &up_path,
+        crate::templates::app_files::email_verification_migration_up_sql(),
+    )
+    .with_context(|| format!("Failed to write {}", up_path.display()))?;
+    fs::write(
+        &down_path,
+        crate::templates::app_files::email_verification_migration_down_sql(),
+    )
+    .with_context(|| format!("Failed to write {}", down_path.display()))?;
+
+    println!("Created: {}", up_path.display());
+    println!("Created: {}", down_path.display());
+    Ok(())
+}
+
 fn ensure_users_migration() -> Result<()> {
     let base = Path::new("src/database/migrations");
     if !base.exists() {
@@ -349,6 +394,54 @@ fn ensure_users_migration() -> Result<()> {
 
     println!("Created: {}", up_path.display());
     println!("Created: {}", down_path.display());
+    Ok(())
+}
+
+fn enable_session_config_content(content: &str) -> Option<String> {
+    if content
+        .lines()
+        .any(|line| line.trim() == "session_enabled = true")
+    {
+        return None;
+    }
+
+    let updated = if content
+        .lines()
+        .any(|line| line.trim_start().starts_with("session_enabled"))
+    {
+        content
+            .lines()
+            .map(|line| {
+                if line.trim_start().starts_with("session_enabled") {
+                    "session_enabled = true".to_string()
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        format!("{}\nsession_enabled = true", content.trim_end())
+    };
+
+    Some(format!("{}\n", updated.trim_end()))
+}
+
+fn enable_session_config() -> Result<()> {
+    let path = Path::new("src/config/auth.toml");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("Could not read {}", path.display()))?;
+
+    let Some(updated) = enable_session_config_content(&content) else {
+        return Ok(());
+    };
+
+    fs::write(path, updated).with_context(|| format!("Could not write {}", path.display()))?;
+
     Ok(())
 }
 
@@ -442,6 +535,7 @@ pub fn auth(api: bool) -> Result<()> {
         ));
 
         ensure_password_reset_migration()?;
+        ensure_email_verification_migration()?;
     } else {
         files.push((
             "src/app/http/controllers/auth/login_controller.rs",
@@ -505,6 +599,7 @@ pub fn auth(api: bool) -> Result<()> {
         ));
 
         ensure_password_reset_migration()?;
+        ensure_email_verification_migration()?;
     }
 
     for (path, content) in &files {
@@ -531,6 +626,7 @@ pub fn auth(api: bool) -> Result<()> {
         let route_lines = crate::templates::app_files::auth_api_route_snippet();
         inject_auth_into_routes("src/routes/api.rs", use_decl, route_lines)?;
     } else {
+        enable_session_config()?;
         inject_mod_decl("src/app/http/controllers/mod.rs", "dashboard_controller")?;
         inject_mod_decl("src/app/http/controllers/auth/mod.rs", "forgot_password_controller")?;
         inject_mod_decl("src/app/http/controllers/auth/mod.rs", "reset_password_controller")?;
@@ -728,6 +824,19 @@ mod tests {
         assert_eq!(to_snake_case("StoreBlogRequest"), "store_blog_request");
         assert_eq!(to_snake_case("APIClientMiddleware"), "api_client_middleware");
         assert_eq!(to_snake_case("admin/users/ShowUser"), "admin_users_show_user");
+    }
+
+    #[test]
+    fn enable_session_config_adds_missing_key_on_new_line() {
+        let input = "[auth]\nguard = \"web\"\nredirect = \"/login\"\n";
+        let out = enable_session_config_content(input).unwrap();
+        assert!(out.contains("redirect = \"/login\"\nsession_enabled = true\n"));
+    }
+
+    #[test]
+    fn enable_session_config_is_noop_when_already_true() {
+        let input = "[auth]\nsession_enabled = true\n";
+        assert!(enable_session_config_content(input).is_none());
     }
 
     fn api_content() -> String {
@@ -1683,18 +1792,19 @@ mod tests {
         assert!(v.contains("action=\"/email/verification-notification\""));
         assert!(v.contains("Verify"));
     }
-    // 105. User model carries the verification column + helper
+    // 105. Base User model stays independent from email verification columns
     #[test]
-    fn ev_105_user_model_has_verified_column() {
+    fn ev_105_user_model_has_no_verified_column() {
         let m = af::user_model_rs();
-        assert!(m.contains("email_verified_at: Option<DateTime<Utc>>"));
-        assert!(m.contains("fn is_verified"));
+        assert!(!m.contains("email_verified_at: Option<DateTime<Utc>>"));
+        assert!(!m.contains("fn is_verified"));
         assert!(m.contains("pub async fn find("));
     }
-    // 106. base users migration includes the verification column
+    // 106. email verification is an auth migration, not a base users column
     #[test]
-    fn ev_106_users_migration_has_verified_column() {
-        assert!(af::initial_migration_up_sql().contains("email_verified_at"));
+    fn ev_106_email_verification_migration_has_verified_column() {
+        assert!(!af::initial_migration_up_sql().contains("email_verified_at"));
+        assert!(af::email_verification_migration_up_sql().contains("email_verified_at"));
     }
     // 107. registration sends a verification email
     #[test]
@@ -2915,6 +3025,15 @@ mod tests {
             for r in &["/login", "/logout", "/register", "/dashboard"] {
                 assert!(web_rs.contains(r), "web.rs missing {}", r);
             }
+            assert!(
+                read_file("src/config/auth.toml").contains("session_enabled = true"),
+                "web auth must enable sessions"
+            );
+            assert_eq!(
+                find_migrations("add_email_verified_at_to_users_table.up.sql").len(),
+                1,
+                "web auth must create email verification migration"
+            );
             Ok(())
         });
     }
@@ -2941,6 +3060,15 @@ mod tests {
                         "/api/auth/email/verification-notification", "/api/me"] {
                 assert!(api_rs.contains(r), "api.rs missing {}", r);
             }
+            assert!(
+                read_file("src/config/auth.toml").contains("session_enabled = false"),
+                "api auth must not enable session cookies"
+            );
+            assert_eq!(
+                find_migrations("add_email_verified_at_to_users_table.up.sql").len(),
+                1,
+                "api auth must create email verification migration"
+            );
             // web.rs must be untouched (no login route)
             assert!(!read_file("src/routes/web.rs").contains("\"/login\""),
                 "api auth must not touch web.rs");

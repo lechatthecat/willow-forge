@@ -18,6 +18,10 @@ const SESSION_KEY_PREFIX: &str = "session:";
 /// }))
 /// ```
 pub async fn handle(state: Arc<AppState>, mut request: Request, next: Next) -> Response {
+    if !state.config.session.enabled {
+        return next.run(request).await;
+    }
+
     let ttl = state.config.session.lifetime;
     let cookie_name = state.config.session.cookie.as_str();
 

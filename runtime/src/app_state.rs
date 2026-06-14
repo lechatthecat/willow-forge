@@ -80,6 +80,7 @@ pub struct AuthConfig {
 
 #[derive(Debug, Clone)]
 pub struct SessionConfig {
+    pub enabled: bool,
     pub lifetime: u64,
     pub cookie: String,
     pub secure: bool,
@@ -137,6 +138,7 @@ impl Config {
             "cache.nodes" | "redis.nodes" => Some(self.redis.nodes.join(",")),
             "auth.guard" => Some(self.auth.guard.clone()),
             "auth.redirect" => Some(self.auth.redirect.clone()),
+            "session.enabled" => Some(self.session.enabled.to_string()),
             "session.lifetime" => Some(self.session.lifetime.to_string()),
             "session.cookie" => Some(self.session.cookie.clone()),
             "session.secure" => Some(self.session.secure.to_string()),
@@ -240,6 +242,12 @@ impl Config {
                 ),
             },
             session: SessionConfig {
+                enabled: env_bool(
+                    &env,
+                    "SESSION_ENABLED",
+                    auth.session_enabled,
+                    session_defaults.enabled,
+                )?,
                 lifetime: env_parse(
                     &env,
                     "SESSION_LIFETIME",
@@ -372,6 +380,7 @@ impl Default for AuthConfig {
 impl Default for SessionConfig {
     fn default() -> Self {
         Self {
+            enabled: false,
             lifetime: 7200,
             cookie: "willow_session".to_string(),
             secure: false,
@@ -382,7 +391,7 @@ impl Default for SessionConfig {
 impl Default for JwtConfig {
     fn default() -> Self {
         Self {
-            secret: "change-me-in-production".to_string(),
+            secret: String::new(),
             expiry: 3600,
         }
     }
@@ -465,6 +474,7 @@ struct AuthToml {
 struct AuthSection {
     guard: Option<String>,
     redirect: Option<String>,
+    session_enabled: Option<bool>,
     session_lifetime: Option<u64>,
     session_cookie: Option<String>,
     session_secure: Option<bool>,
@@ -616,6 +626,12 @@ mod tests {
                     expiry: Some(900),
                 },
             },
+            auth: AuthToml {
+                auth: AuthSection {
+                    session_enabled: Some(true),
+                    ..Default::default()
+                },
+            },
             ..Default::default()
         };
 
@@ -629,6 +645,7 @@ mod tests {
         assert_eq!(config.database.password, "secret");
         assert_eq!(config.database.max_connections, 5);
         assert_eq!(config.redis.nodes, vec!["redis://cache:7001".to_string()]);
+        assert!(config.session.enabled);
         assert_eq!(config.jwt.secret, "jwt-secret");
         assert_eq!(config.jwt.expiry, 900);
     }
@@ -656,6 +673,7 @@ mod tests {
             "APP_NAME" => Some("From Env".to_string()),
             "APP_DEBUG" => Some("true".to_string()),
             "DB_PORT" => Some("15432".to_string()),
+            "SESSION_ENABLED" => Some("true".to_string()),
             _ => None,
         })
         .unwrap();
@@ -663,6 +681,7 @@ mod tests {
         assert_eq!(config.app_name, "From Env");
         assert!(config.app_debug);
         assert_eq!(config.database.port, 15432);
+        assert!(config.session.enabled);
     }
 
     #[test]
@@ -690,5 +709,6 @@ debug = false
         assert_eq!(config.app_name, "Parsed App");
         assert!(!config.app_debug);
         assert_eq!(config.database.host, "127.0.0.1");
+        assert!(!config.session.enabled);
     }
 }
