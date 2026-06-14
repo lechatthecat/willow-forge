@@ -460,7 +460,7 @@ use serde::Deserialize;
 use serde_json::json;
 use validator::Validate;
 
-use ::{name}::{{AppError, Cache, Context, ValidatedJson}};
+use ::{name}::{{AppError, Cache, Context, Hash, ValidatedJson}};
 use crate::app::models::user::User;
 
 // ============================================================
@@ -544,6 +544,7 @@ pub async fn store(
     ValidatedJson(req): ValidatedJson<StoreUserRequest>,
 ) -> Result<impl IntoResponse, AppError> {{
     let pool = &ctx.state.services.db;
+    let hashed = Hash::make(&req.password)?;
 
     let user = sqlx::query_as::<_, User>(
         "INSERT INTO users (name, email, password)
@@ -552,7 +553,7 @@ pub async fn store(
     )
     .bind(&req.name)
     .bind(&req.email)
-    .bind(&req.password)
+    .bind(&hashed)
     .fetch_one(pool)
     .await
     .map_err(|e| match e {{
@@ -978,7 +979,7 @@ pub struct User {
     pub id: i32,
     pub name: String,
     pub email: String,
-    #[serde(skip_serializing)]
+    #[serde(skip_serializing, default)]
     pub password: String,
     pub created_at: DateTime<Utc>,
 }
@@ -2857,7 +2858,7 @@ mod tests {
     #[test]
     fn user_controller_uses_crate_name() {
         let out = user_controller("my_app");
-        assert!(out.contains("use ::my_app::{AppError, Cache, Context, ValidatedJson}"));
+        assert!(out.contains("use ::my_app::{AppError, Cache, Context, Hash, ValidatedJson}"));
         assert!(out.contains("Result<impl IntoResponse, AppError>"));
     }
 
@@ -4216,7 +4217,7 @@ mod tests {
     // um_01. security: password field has skip_serializing
     #[test]
     fn um_01_password_has_skip_serializing() {
-        assert!(user_model_rs().contains("#[serde(skip_serializing)]"));
+        assert!(user_model_rs().contains("#[serde(skip_serializing, default)]"));
     }
     // um_02. security: password field exists for DB reads
     #[test]
@@ -4332,6 +4333,17 @@ mod tests {
     #[test]
     fn uc_10_no_destroy_function() {
         assert!(!user_controller("my_app").contains("pub async fn destroy("));
+    }
+    #[test]
+    fn uc_11_store_hashes_password_before_insert() {
+        let out = user_controller("my_app");
+        assert!(out.contains("Hash::make(&req.password)?"));
+        assert!(out.contains(".bind(&hashed)"));
+        assert!(!out.contains(".bind(&req.password)"));
+    }
+    #[test]
+    fn uc_12_store_imports_hash_facade() {
+        assert!(user_controller("my_app").contains("Context, Hash, ValidatedJson"));
     }
 
     // ── routes / bootstrap / main_rs (5) ─────────────────────────────────────

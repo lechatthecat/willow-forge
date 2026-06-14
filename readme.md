@@ -397,14 +397,16 @@ pub struct User {
     pub id: i32,
     pub name: String,
     pub email: String,
-    #[serde(skip_serializing)]
+    #[serde(skip_serializing, default)]
     pub password: String,
     pub created_at: DateTime<Utc>,
 }
 
 impl User {
     pub async fn find_by_email(db: &PgPool, email: &str) -> Result<Option<Self>, sqlx::Error> {
-        sqlx::query_as::<_, Self>("SELECT * FROM users WHERE email = $1 LIMIT 1")
+        sqlx::query_as::<_, Self>(
+            "SELECT id, name, email, password, created_at FROM users WHERE email = $1 LIMIT 1",
+        )
             .bind(email)
             .fetch_optional(db)
             .await
@@ -455,7 +457,9 @@ use my_app::{Cache, Context, AppError};
 
 // Get or compute-and-store
 let users = Cache::remember(&ctx, "users.all", Duration::from_secs(300), || async {
-    sqlx::query_as::<_, User>("SELECT * FROM users")
+    sqlx::query_as::<_, User>(
+        "SELECT id, name, email, password, created_at FROM users ORDER BY id",
+    )
         .fetch_all(&ctx.state.services.db)
         .await
         .map_err(AppError::from)

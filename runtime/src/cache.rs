@@ -9,7 +9,9 @@
 //!
 //! // Get or compute and store for 5 minutes
 //! let users = Cache::remember(&ctx, "users.all", Duration::from_secs(300), || async {
-//!     sqlx::query_as::<_, User>("SELECT * FROM users")
+//!     sqlx::query_as::<_, User>(
+//!         "SELECT id, name, email, password, created_at FROM users ORDER BY id",
+//!     )
 //!         .fetch_all(&ctx.state.services.db)
 //!         .await
 //!         .map_err(AppError::from)
